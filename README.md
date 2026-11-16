@@ -1,6 +1,6 @@
 # CWFIS Fire Weather Forecast
 
-A small web page with three pickers (area, date, layer) over a map of the CWFIS daily fire weather grids, plus a forecast PDF for the selected area. Fire weather comes from the Canadian Wildland Fire Information System (NRCan), the point forecast from ECCC's GEM models via Open-Meteo, and alerts from Environment and Climate Change Canada: no model downloads.
+A small web page with three pickers (area, date, layer) over a map of the CWFIS daily fire weather grids, plus a forecast PDF for the selected area. Fire weather comes from the Canadian Wildland Fire Information System (NRCan), the point forecast from ECCC's GEM models via Open-Meteo, and alerts from Environment and Climate Change Canada. The only model download is the RDPS 10 m wind for the map overlay.
 
 - **Map:** the CWFIS layer (FWI, ISI, FFMC, BUI, DMC, DC, fire danger, head fire intensity) for the chosen date, straight from CWFIS's WMS, with its legend. The area's reference point and bounding box are drawn on top.
 - **Forecast PDF:** for the chosen area, from the day before the selected date to the end of the CWFIS forecast (up to 12 days). It includes:
@@ -17,6 +17,16 @@ Picking an area (from the list, or by tapping it on the map) opens a panel at th
 - **FWI 3 days:** CWFIS's daily values for today, tomorrow and the day after: danger class, FWI, the area's worst cell, ISI, BUI, FFMC, DMC, DC and noon weather.
 
 The hourly FFMC, ISI and FWI in the first two tabs are calculated by this app ([wxpoint.py](wxpoint.py)), not by CWFIS. They start from CWFIS's daily FFMC at noon yesterday and step through the Open-Meteo hourly weather with the hourly FFMC equations (Van Wagner 1977, as in the cffdrs package's `hffmc`), using CWFIS's daily BUI. They show the shape of the day: overnight recovery, the afternoon peak, the effect of rain.
+
+## Wind overlay
+
+**Wind** (Off, Particles, Arrows) draws ECCC's RDPS 10 m wind over the map: animated streaks that flow with the wind (faster is darker and heavier, red above about 55 km/h), or arrows pointing downwind. A bar at the top of the map steps through the hours from now to 48 hours ahead (−1h / +1h, or ▶ to play them), and hovering or tapping the map shows the speed and direction there.
+
+The server ([wind.py](wind.py)) checks the MSC Datamart every 10 minutes for a newer RDPS run. Once a run's files reach 48 hours past now, it downloads the `WindSpeed_AGL-10m` and `WindDir_AGL-10m` GRIB2 for each hour (about 100 files), regrids them from the rotated lat-lon grid onto a Web Mercator raster over Canada, and keeps them as small byte frames in `data/wind/`. Only the newest complete run is kept, and the previous one is served until the next has fully arrived. The browser fetches one hour at a time (two frames).
+
+RDPS has no 2 m wind. 10 m is the height the FWI System, the FBP System and CWFIS use.
+
+`FW_WIND=0` turns the download off. `FW_WIND_HOURS` (default 48) sets how far ahead it goes.
 
 ## Alerts and notifications
 
@@ -51,7 +61,7 @@ Open http://127.0.0.1:8000. On Windows use `.venv\Scripts\...`.
 
 ## Deploy on DigitalOcean
 
-The smallest droplet is plenty: the server only queries CWFIS and keeps a short in-memory cache. Push this folder to a GitHub repo, point a domain's DNS at the droplet (optional), then:
+The smallest droplet is plenty: the server queries CWFIS, keeps a short in-memory cache, and stores about 20 MB of wind frames. Push this folder to a GitHub repo, point a domain's DNS at the droplet (optional), then:
 
 ```
 ssh root@<droplet-ip>

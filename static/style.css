@@ -170,3 +170,21 @@ body.sheet-open #legend { bottom: calc(var(--sheet-h, 0px) + 24px); }
   /* keep the map credits (required by OpenStreetMap) visible above the panel */
   body.sheet-open .leaflet-bottom { bottom: var(--sheet-h, 0px); }
 }
+
+/* ---- RDPS wind overlay: canvas over the map tiles, under the area labels; hour bar at the top of the map ---- */
+#wind-canvas { position: absolute; inset: 0; pointer-events: none; z-index: 450; }
+#windbar { position: absolute; z-index: 1000; top: 10px; left: 50%; transform: translateX(-50%); width: min(440px, calc(100% - 120px));
+           background: rgba(255, 255, 255, 0.94); border-radius: 8px; box-shadow: 0 1px 8px rgba(0, 0, 0, 0.3); padding: 6px 10px 5px; }
+#windbar[hidden] { display: none; }
+#windbar .wb-row { display: flex; align-items: center; gap: 4px; }
+#windbar .wb-row button { font: inherit; font-size: 12px; min-width: 28px; height: 26px; border: 1px solid #c3c8cd; background: #fff; border-radius: 4px; cursor: pointer; }
+#windbar .wb-row button.on { background: #1d2329; color: #fff; border-color: #1d2329; }
+#windbar .wb-row b { flex: 1; text-align: center; font-size: 13px; white-space: nowrap; }
+#windbar .wb-row .x { border: none; background: none; font-size: 18px; color: #5b6670; min-width: 22px; }
+#windbar input[type=range] { width: 100%; margin: 4px 0 2px; accent-color: #e8590c; }
+#windbar .sub { display: flex; justify-content: space-between; gap: 8px; white-space: nowrap; overflow: hidden; }
+#windbar #wb-read { overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 700px) {
+  #windbar { top: 8px; width: calc(100% - 16px); padding: 5px 8px 4px; }
+  #windbar #wb-src { display: none; }
+}

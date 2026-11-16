@@ -21,6 +21,7 @@ import alerts
 import cwfis
 import push
 import report_pdf
+import wind
 import wxpoint
 
 ROOT = Path(__file__).resolve().parent
@@ -37,12 +38,15 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(na
 log = logging.getLogger("app")
 pusher = push.Push(DATA)
 wx_alerts = alerts.Alerts(AOI_FILE, DATA / "alerts_state.json", on_new=pusher.notify_alert)
+rdps_wind = wind.Wind(DATA)
 _stop = threading.Event()
 
 
 @asynccontextmanager
 async def lifespan(app):
     threading.Thread(target=wx_alerts.loop, args=(_stop,), name="alerts", daemon=True).start()
+    if os.environ.get("FW_WIND", "1") != "0":
+        threading.Thread(target=rdps_wind.loop, args=(_stop,), name="wind", daemon=True).start()
     yield
     _stop.set()
 
@@ -135,6 +139,25 @@ def _area_panel(area):
 @app.get("/api/area/{aoi}")
 async def area_panel(aoi: str):
     return await run_in_threadpool(_area_panel, find_area(aoi))
+
+
+# ---- RDPS 10 m wind frames for the map overlay ----------------------------------------------------------
+
+@app.get("/api/wind")
+def wind_meta():
+    return rdps_wind.meta()
+
+
+@app.get("/api/wind/{run}/{var}/{fh}")
+def wind_frame(run: str, var: str, fh: int):
+    if not re.fullmatch(r"\d{10}", run) or var not in wind.VARIABLES:
+        raise HTTPException(404)
+    p = rdps_wind.path(run, var, fh)
+    if not p.is_file():
+        raise HTTPException(404, "no such wind frame (a newer run may have replaced it)")
+    # stored gzipped; the browser inflates it
+    return FileResponse(p, media_type="application/octet-stream",
+                        headers={"Content-Encoding": "gzip", "Cache-Control": "public, max-age=31536000, immutable"})
 
 
 # ---- ECCC alerts and push notifications ----------------------------------------------------------

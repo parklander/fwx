@@ -7,3 +7,4 @@ pyproj
 reportlab
 tzdata
 pywebpush
+eccodes

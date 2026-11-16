@@ -6,7 +6,7 @@
   const iso = (d) => d.toISOString().slice(0, 10);
   const today = iso(new Date(Date.now() - new Date().getTimezoneOffset() * 60000));
   const prefs = (() => { try { return JSON.parse(localStorage.getItem("cwfis-prefs") || "{}"); } catch (_) { return {}; } })();
-  const save = () => { try { localStorage.setItem("cwfis-prefs", JSON.stringify({ aoi: $("aoi").value, layer: $("layer").value })); } catch (_) {} };
+  const save = () => { try { localStorage.setItem("cwfis-prefs", JSON.stringify({ aoi: $("aoi").value, layer: $("layer").value, wind: $("wind").value })); } catch (_) {} };
 
   const map = L.map("map", { zoomControl: true }).setView([55, -97], 4);
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -284,6 +284,101 @@
   };
   pushState().catch(() => {});
 
+  // ---- RDPS 10 m wind: particles or arrows for the next 48 hours ------------------------------------
+  const COMPASS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
+  const hourLabel = (t) => t.toLocaleString("en-CA", { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false, timeZoneName: "short" });
+  let WM = null, wind = null, windHours = [], windFrames = new Map(), windShown = null, playing = null;
+  const windHour = () => windHours[+$("wb-hour").value];
+
+  async function loadWindMeta() {
+    let m;
+    try { m = await (await fetch("/api/wind")).json(); } catch (_) { return; }
+    const keep = windHour()?.valid;
+    WM = m;
+    if (!wind && m.width) { wind = WindLayer(map, $("wind-canvas"), m, { light: true }); wind.setMode("off"); }
+    // hours from the current hour on (the run starts a little before now)
+    const now = Date.now() - 3600e3;
+    windHours = (m.hours || []).map((h) => ({ ...h, t: new Date(h.valid.replace("Z", ":00Z")) })).filter((h) => h.t.getTime() >= now);
+    $("wb-hour").max = Math.max(0, windHours.length - 1);
+    const k = windHours.findIndex((h) => h.valid === keep);
+    $("wb-hour").value = k >= 0 ? k : 0;
+    $("wb-src").textContent = m.run ? `RDPS ${m.run.slice(8)}Z ${m.run.slice(6, 8)}/${m.run.slice(4, 6)}` : "";
+    if ($("wind").value !== "off") showWind();
+  }
+
+  function windFrame(run, fh) {
+    const key = `${run}/${fh}`;
+    if (!windFrames.has(key)) {
+      const get = (v) => fetch(`/api/wind/${run}/${v}/${fh}`).then((r) => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); }).then((b) => new Uint8Array(b));
+      windFrames.set(key, Promise.all([get("wspd"), get("wdir")]).catch((e) => { windFrames.delete(key); throw e; }));
+      while (windFrames.size > 16) windFrames.delete(windFrames.keys().next().value);
+    }
+    return windFrames.get(key);
+  }
+
+  async function showWind() {
+    const mode = $("wind").value;
+    $("windbar").hidden = mode === "off";
+    if (mode === "off") { stopPlay(); wind?.setMode("off"); return; }
+    if (!WM?.run || !windHours.length) {
+      $("wb-time").textContent = WM?.status === "error" ? "Wind unavailable right now"
+        : WM?.run ? "The wind forecast is out of date" : "Wind is still downloading…";
+      wind?.setFrames(null); return;
+    }
+    if (wind.mode !== mode) wind.setMode(mode);
+    const h = windHour(), run = WM.run;
+    $("wb-time").textContent = hourLabel(h.t);
+    try {
+      const [spd, dir] = await windFrame(run, h.fh);
+      if (windHour() !== h || $("wind").value === "off") return;  // moved on while loading
+      windShown = { spd, dir };
+      wind.setFrames(spd, dir, "wspd", "wdir");
+      const nxt = windHours[+$("wb-hour").value + 1];
+      if (nxt) windFrame(run, nxt.fh).catch(() => {});  // prefetch the next hour
+    } catch (_) {
+      $("wb-time").textContent = "Couldn't load this hour";
+    }
+  }
+
+  // value under the pointer (or a tap)
+  const mercY = (lat) => Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360));
+  function readWind(ll) {
+    if (!WM || !windShown || $("wind").value === "off") return;
+    const B = WM.bounds;
+    const x = Math.floor(((ll.lng - B.west) / (B.east - B.west)) * WM.width);
+    const y = Math.floor(((mercY(B.north) - mercY(ll.lat)) / (mercY(B.north) - mercY(B.south))) * WM.height);
+    const i = x >= 0 && x < WM.width && y >= 0 && y < WM.height ? y * WM.width + x : -1;
+    const q = i >= 0 ? windShown.spd[i] : 0, d = i >= 0 ? windShown.dir[i] : 0;
+    $("wb-read").textContent = q && d ? `${q - 1} km/h from ${COMPASS[Math.round(((d - 1) * 2) / 22.5) % 16]} (${(d - 1) * 2}°)` : "No wind data here";
+  }
+  map.on("mousemove click", (e) => readWind(e.latlng));
+
+  function step(n) {
+    const k = Math.min(Math.max(+$("wb-hour").value + n, 0), windHours.length - 1);
+    $("wb-hour").value = k; showWind();
+    return k;
+  }
+  function stopPlay() { clearTimeout(playing); playing = null; $("wb-play").textContent = "▶︎"; $("wb-play").classList.remove("on"); }
+  async function playStep() {
+    if (+$("wb-hour").value >= windHours.length - 1) $("wb-hour").value = -1;
+    step(1);
+    const h = windHour();
+    await windFrame(WM.run, h.fh).catch(() => {});
+    if (playing) playing = setTimeout(playStep, 900);
+  }
+  $("wb-play").onclick = () => {
+    if (playing) return stopPlay();
+    $("wb-play").textContent = "❚❚"; $("wb-play").classList.add("on");
+    playing = setTimeout(playStep, 0);
+  };
+  $("wb-prev").onclick = () => { stopPlay(); step(-1); };
+  $("wb-next").onclick = () => { stopPlay(); step(1); };
+  $("wb-hour").oninput = () => { stopPlay(); showWind(); };
+  $("wb-close").onclick = () => { $("wind").value = "off"; save(); showWind(); };
+  $("wind").value = ["particles", "arrows"].includes(prefs.wind) ? prefs.wind : "off";
+  $("wind").onchange = () => { save(); showWind(); if (phone.matches) closeSettings(); };
+  setInterval(loadWindMeta, 10 * 60e3);
+
   // ---- phones: ⚙ opens Date, Layer and All of Canada; the legend collapses on tap ------------------
   const phone = window.matchMedia("(max-width: 700px)");
   function closeSettings() { document.body.classList.remove("settings-open"); $("gear").classList.remove("on"); $("gear").setAttribute("aria-expanded", "false"); }
@@ -309,5 +404,6 @@
   showLayer();
   updatePdfLink();
   loadAlerts();
+  loadWindMeta();
   if (linked) { openPanel(); showArea(true); }
 })();

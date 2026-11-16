@@ -19,6 +19,7 @@ from fastapi.concurrency import run_in_threadpool
 
 import alerts
 import cwfis
+import goes
 import push
 import report_pdf
 import wind
@@ -81,6 +82,12 @@ async def layers():
     except Exception as e:
         log.warning("layer list failed: %s", e)
         raise HTTPException(502, "CWFIS isn't answering right now")
+
+
+@app.get("/api/goes")
+async def goes_times():
+    """GOES-East/West natural colour (GeoMet WMS) and each layer's current time range."""
+    return {"wms": goes.WMS, "layers": await run_in_threadpool(goes.times)}
 
 
 def _period(start):

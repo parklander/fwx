@@ -13,6 +13,8 @@
     maxZoom: 18, attribution: "© OpenStreetMap contributors · Fire weather © NRCan CWFIS",
   }).addTo(map);
 
+  let wind = null;  // RDPS wind overlay, set up once the wind metadata arrives
+
   // ---- areas -----------------------------------------------------------------------------------
   const { default: defAoi, areas } = await (await fetch("/api/areas")).json();
   const byId = Object.fromEntries(areas.map((a) => [a.id, a]));
@@ -100,8 +102,17 @@
     info = { wms: "https://cwfis.cfs.nrcan.gc.ca/geoserver/public/wms", layers: [] };
   }
   const layerById = Object.fromEntries(info.layers.map((l) => [l.id, l]));
-  $("layer").innerHTML = info.layers.map((l) => `<option value="${l.id}">${l.title}</option>`).join("");
-  $("layer").value = layerById[prefs.layer] ? prefs.layer : info.layers.some((l) => l.id === "fwi") ? "fwi" : info.layers[0]?.id;
+  // GOES satellite imagery (ECCC GeoMet WMS): the latest image, 1 km, every 10 min
+  const SAT = {
+    sat_natural: { key: "natural", title: "Natural colour",
+      desc: "Daytime colour image: land green-brown, water clouds white, ice clouds and snow cyan, smoke a grey-tan haze. Blank at night." },
+  };
+  const SAT_SPLIT_LON = -105;  // GOES-West west of here: it sees BC and Yukon at a far better angle
+  const isSat = (id) => id in SAT;
+  $("layer").innerHTML = `<optgroup label="CWFIS daily">${info.layers.map((l) => `<option value="${l.id}">${l.title}</option>`).join("")}</optgroup>`
+    + `<optgroup label="Satellite (GOES)">${Object.entries(SAT).map(([id, s]) => `<option value="${id}">${s.title}</option>`).join("")}</optgroup>`;
+  $("layer").value = layerById[prefs.layer] || isSat(prefs.layer) ? prefs.layer
+    : info.layers.some((l) => l.id === "fwi") ? "fwi" : info.layers[0]?.id || "sat_natural";
 
   function setDateRange() {
     const l = layerById[$("layer").value];
@@ -112,26 +123,67 @@
     if ($("date").value < l.start) $("date").value = l.start;
   }
 
-  let wms = null;
-  function showLayer() {
-    const l = layerById[$("layer").value];
-    if (!l) return;
-    setDateRange();
-    const time = $("date").value;
-    if (wms) map.removeLayer(wms);
-    wms = L.tileLayer.wms(info.wms, {
-      layers: l.id, format: "image/png", transparent: true, version: "1.3.0", time, opacity: 0.7,
-      attribution: "NRCan CWFIS",
-    }).addTo(map);
-    wms.on("loading", () => status("Loading map…"));
-    wms.on("load", () => status(""));
-    $("legend-title").textContent = l.title;
-    $("legend-img").src = `${info.wms}?service=WMS&version=1.3.0&request=GetLegendGraphic&format=image/png&layer=${l.id}`;
-    $("legend-date").textContent = `${time}${time >= today ? " (forecast)" : " (observed)"}`;
+  let wms = null, GOES = null;
+  async function loadGoes() {
+    try { GOES = await (await fetch("/api/goes")).json(); } catch (_) { return; }
+    if (isSat($("layer").value)) showLayer();
+  }
+  const satSide = () => (map.getCenter().lng < SAT_SPLIT_LON ? "West" : "East");
+
+  function showSat() {
+    const s = SAT[$("layer").value], t = GOES?.layers?.[`${satSide().toLowerCase()}:${s.key}`];
+    $("legend-img").hidden = true;
+    $("legend-title").textContent = `GOES-${satSide()} ${s.title.toLowerCase()}`;
+    if (!t) {
+      if (wms) { map.removeLayer(wms); wms = null; }
+      $("legend-date").textContent = GOES ? "Satellite images are unavailable right now." : "Loading…";
+      $("legend").hidden = false;
+      return;
+    }
+    if (!wms || wms.options.layers !== t.layer || wms._url !== GOES.wms) {
+      if (wms) map.removeLayer(wms);
+      wms = L.tileLayer.wms(GOES.wms, { layers: t.layer, format: "image/png", transparent: true, version: "1.3.0",
+        time: t.end, opacity: 1, attribution: `GOES-${satSide()} imagery: ECCC GeoMet` }).addTo(map);
+      wms.on("loading", () => status("Loading satellite image…"));
+      wms.on("load", () => status(""));
+    } else if (wms.wmsParams.time !== t.end) {
+      wms.setParams({ time: t.end });
+    }
+    const when = new Date(t.end).toLocaleString("en-CA", { weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false, timeZoneName: "short" });
+    $("legend-date").innerHTML = `${s.desc}<br><b>Image ${when}</b> · latest, refreshed every 10 min`;
     $("legend").hidden = false;
+  }
+
+  function showLayer() {
+    const id = $("layer").value, sat = isSat(id);
+    $("date").disabled = sat;
+    $("date").title = sat ? "The satellite layer shows the latest image" : "";
+    wind?.setLight(!sat);  // white wind streaks over the dark satellite image
+    if (sat) { showSat(); }
+    else {
+      const l = layerById[id];
+      if (!l) return;
+      setDateRange();
+      const time = $("date").value;
+      if (wms) map.removeLayer(wms);
+      wms = L.tileLayer.wms(info.wms, {
+        layers: l.id, format: "image/png", transparent: true, version: "1.3.0", time, opacity: 0.7,
+        attribution: "NRCan CWFIS",
+      }).addTo(map);
+      wms.on("loading", () => status("Loading map…"));
+      wms.on("load", () => status(""));
+      $("legend-img").hidden = false;
+      $("legend-title").textContent = l.title;
+      $("legend-img").src = `${info.wms}?service=WMS&version=1.3.0&request=GetLegendGraphic&format=image/png&layer=${l.id}`;
+      $("legend-date").textContent = `${time}${time >= today ? " (forecast)" : " (observed)"}`;
+      $("legend").hidden = false;
+    }
     areaLayer.eachLayer((g) => g.bringToFront());
     shapes[$("aoi").value]?.bringToFront();
   }
+  // GOES-East/West swap as the map crosses SAT_SPLIT_LON; new images every 10 min
+  map.on("moveend", () => { if (isSat($("layer").value)) showSat(); });
+  setInterval(loadGoes, 5 * 60e3);
 
   function updatePdfLink() {
     const d = $("date").value || today;
@@ -287,7 +339,7 @@
   // ---- RDPS 10 m wind: particles or arrows for the next 48 hours ------------------------------------
   const COMPASS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
   const hourLabel = (t) => t.toLocaleString("en-CA", { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false, timeZoneName: "short" });
-  let WM = null, wind = null, windHours = [], windFrames = new Map(), windShown = null, playing = null;
+  let WM = null, windHours = [], windFrames = new Map(), windShown = null, playing = null;
   const windHour = () => windHours[+$("wb-hour").value];
 
   async function loadWindMeta() {
@@ -295,7 +347,7 @@
     try { m = await (await fetch("/api/wind")).json(); } catch (_) { return; }
     const keep = windHour()?.valid;
     WM = m;
-    if (!wind && m.width) { wind = WindLayer(map, $("wind-canvas"), m, { light: true }); wind.setMode("off"); }
+    if (!wind && m.width) { wind = WindLayer(map, $("wind-canvas"), m, { light: !isSat($("layer").value) }); wind.setMode("off"); }
     // hours from the current hour on (the run starts a little before now)
     const now = Date.now() - 3600e3;
     windHours = (m.hours || []).map((h) => ({ ...h, t: new Date(h.valid.replace("Z", ":00Z")) })).filter((h) => h.t.getTime() >= now);
@@ -405,5 +457,6 @@
   updatePdfLink();
   loadAlerts();
   loadWindMeta();
+  loadGoes();
   if (linked) { openPanel(); showArea(true); }
 })();

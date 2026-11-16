@@ -5,6 +5,7 @@
  *   const wind = WindLayer(map, canvasEl, meta, { light: true });  // light: dark streaks for a light basemap
  *   wind.setFrames(speedCodes, dirCodes, "wspd", "wdir");  // null to clear
  *   wind.setMode("particles" | "arrows" | "off");
+ *   wind.setLight(false);  // switch to white streaks over dark imagery
  */
 (function () {
   "use strict";
@@ -20,9 +21,9 @@
   ];
 
   window.WindLayer = function (map, canvas, meta, opts = {}) {
-    const BUCKETS = opts.light ? LIGHT_BG : DARK_BG;
-    const halo = opts.light ? "rgba(255,255,255,.75)" : "rgba(10,12,16,.55)";
-    const ink = (s) => (opts.light ? (s > 40 ? "#7a0d16" : "#14202d") : s > 40 ? "#fff" : "rgba(255,255,255,.82)");
+    let light = !!opts.light, BUCKETS = light ? LIGHT_BG : DARK_BG;
+    const halo = () => (light ? "rgba(255,255,255,.75)" : "rgba(10,12,16,.55)");
+    const ink = (s) => (light ? (s > 40 ? "#7a0d16" : "#14202d") : s > 40 ? "#fff" : "rgba(255,255,255,.82)");
     const B = meta.bounds, W = meta.width, H = meta.height;
     const mercY = (lat) => Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360));
     const yN = mercY(B.north), yS = mercY(B.south);
@@ -135,7 +136,7 @@
           const a = ((d + 180) * Math.PI) / 180, len = 7 + Math.min(s, 80) * 0.22;
           const dx = Math.sin(a) * len, dy = -Math.cos(a) * len;
           const x0 = x - dx / 2, y0 = y - dy / 2, x1 = x + dx / 2, y1 = y + dy / 2;
-          ctx.strokeStyle = halo; ctx.lineWidth = 3.2;
+          ctx.strokeStyle = halo(); ctx.lineWidth = 3.2;
           arrow(ctx, x0, y0, x1, y1, a);
           ctx.strokeStyle = ink(s); ctx.lineWidth = 1.4;
           arrow(ctx, x0, y0, x1, y1, a);
@@ -175,6 +176,8 @@
     return {
       get mode() { return mode; },
       setMode(m) { mode = m; redraw(); },
+      /** Light basemap (dark streaks) or dark imagery such as satellite (white streaks). */
+      setLight(on) { if (light !== !!on) { light = !!on; BUCKETS = light ? LIGHT_BG : DARK_BG; redraw(); } },
       /** New hour's frames. Particles keep flowing (only the field changes); arrows redraw. */
       setFrames(spd, dir, sv, dv) {
         frames = spd && dir ? [spd, dir, sv, dv] : null;

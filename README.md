@@ -18,6 +18,10 @@ Picking an area (from the list, or by tapping it on the map) opens a panel at th
 
 The hourly FFMC, ISI and FWI in the first two tabs are calculated by this app ([wxpoint.py](wxpoint.py)), not by CWFIS. They start from CWFIS's daily FFMC at noon yesterday and step through the Open-Meteo hourly weather with the hourly FFMC equations (Van Wagner 1977, as in the cffdrs package's `hffmc`), using CWFIS's daily BUI. They show the shape of the day: overnight recovery, the afternoon peak, the effect of rain.
 
+## Satellite
+
+The **Layer** list has a *Satellite (GOES)* group with **Natural colour**: the latest GOES 1 km image from ECCC GeoMet (WMS), new every 10 minutes. In it land is green-brown, water clouds are white, ice clouds and snow are cyan, and smoke is a grey-tan haze. The image is blank at night. The map uses GOES-West when it's centred west of 105° W, where that satellite sees at a much better angle, and GOES-East elsewhere. The date picker is greyed out while it's showing, and wind streaks turn white over it. The server only looks up each layer's latest image time ([goes.py](goes.py), cached 5 minutes); the browser fetches the images from GeoMet directly.
+
 ## Wind overlay
 
 **Wind** (Off, Particles, Arrows) draws ECCC's RDPS 10 m wind over the map: animated streaks that flow with the wind (faster is darker and heavier, red above about 55 km/h), or arrows pointing downwind. A bar at the top of the map steps through the hours from now to 48 hours ahead (−1h / +1h, or ▶ to play them), and hovering or tapping the map shows the speed and direction there.

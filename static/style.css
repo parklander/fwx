@@ -188,3 +188,6 @@ body.sheet-open #legend { bottom: calc(var(--sheet-h, 0px) + 24px); }
   #windbar { top: 8px; width: calc(100% - 16px); padding: 5px 8px 4px; }
   #windbar #wb-src { display: none; }
 }
+#legend-date { max-width: 260px; }
+#date:disabled { opacity: 0.5; }
+#legend img[hidden] { display: none; }

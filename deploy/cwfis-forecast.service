@@ -1,0 +1,16 @@
+[Unit]
+Description=CWFIS fire weather forecast
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=fwx
+Group=fwx
+WorkingDirectory=/opt/cwfis-forecast
+Environment=FW_TZ=America/Winnipeg
+ExecStart=/opt/cwfis-forecast/.venv/bin/uvicorn app:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

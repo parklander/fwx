@@ -1,0 +1,304 @@
+{
+ "default": "shilo",
+ "areas": [
+  {
+   "id": "shilo",
+   "name": "CFB Shilo RTA",
+   "prov": "MB",
+   "lat": 49.79,
+   "lon": -99.63,
+   "bbox": [
+    -99.67484,
+    49.60626,
+    -99.26697,
+    49.86543
+   ]
+  },
+  {
+   "id": "comox",
+   "name": "CFB Comox",
+   "prov": "BC",
+   "lat": 49.71,
+   "lon": -124.89,
+   "bbox": [
+    -124.93309,
+    49.65574,
+    -124.85498,
+    49.73114
+   ]
+  },
+  {
+   "id": "sleese",
+   "name": "Chilliwack - Sleese",
+   "prov": "BC",
+   "lat": 49.04012,
+   "lon": -121.66294,
+   "bbox": [
+    -121.68569,
+    49.02528,
+    -121.64236,
+    49.05357
+   ]
+  },
+  {
+   "id": "chilcotin",
+   "name": "Chilcotin Training Area",
+   "prov": "BC",
+   "lat": 52.09005,
+   "lon": -122.54974,
+   "bbox": [
+    -122.6857,
+    51.98953,
+    -122.39594,
+    52.18951
+   ]
+  },
+  {
+   "id": "edmonton",
+   "name": "CFB Edmonton",
+   "prov": "AB",
+   "lat": 53.67,
+   "lon": -113.47,
+   "bbox": [
+    -113.50525,
+    53.64952,
+    -113.42749,
+    53.70362
+   ]
+  },
+  {
+   "id": "wainwright",
+   "name": "CFB Wainwright",
+   "prov": "AB",
+   "lat": 52.78,
+   "lon": -110.88,
+   "bbox": [
+    -111.19675,
+    52.61806,
+    -110.57671,
+    52.86416
+   ]
+  },
+  {
+   "id": "suffield",
+   "name": "CFB Suffield",
+   "prov": "AB",
+   "lat": 50.27,
+   "lon": -111.18,
+   "bbox": [
+    -111.19675,
+    50.20679,
+    -110.26428,
+    50.71298
+   ]
+  },
+  {
+   "id": "coldlake",
+   "name": "4 Wing Cold Lake",
+   "prov": "AB",
+   "lat": 54.4,
+   "lon": -110.28,
+   "bbox": [
+    -111.35193,
+    54.75158,
+    -108.39661,
+    55.39159
+   ]
+  },
+  {
+   "id": "dundurn",
+   "name": "CFB Dundurn",
+   "prov": "SK",
+   "lat": 51.82,
+   "lon": -106.52,
+   "bbox": [
+    -106.72256,
+    51.75892,
+    -106.50627,
+    51.97473
+   ]
+  },
+  {
+   "id": "st-charles",
+   "name": "Saint Charles Range",
+   "prov": "MB",
+   "lat": 49.90928,
+   "lon": -97.33429,
+   "bbox": [
+    -97.34988,
+    49.89812,
+    -97.33246,
+    49.9283
+   ]
+  },
+  {
+   "id": "burwash",
+   "name": "Burwash Training Area",
+   "prov": "ON",
+   "lat": 46.26356,
+   "lon": -80.81474,
+   "bbox": [
+    -80.85732,
+    46.24861,
+    -80.79586,
+    46.30828
+   ]
+  },
+  {
+   "id": "meaford",
+   "name": "CFB Meaford",
+   "prov": "ON",
+   "lat": 44.66218,
+   "lon": -80.66694,
+   "bbox": [
+    -80.7732,
+    44.63324,
+    -80.61716,
+    44.73308
+   ]
+  },
+  {
+   "id": "borden",
+   "name": "CFB Borden",
+   "prov": "ON",
+   "lat": 44.2838,
+   "lon": -79.89361,
+   "bbox": [
+    -79.99901,
+    44.21851,
+    -79.87095,
+    44.33134
+   ]
+  },
+  {
+   "id": "petawawa",
+   "name": "CFB Petawawa",
+   "prov": "ON",
+   "lat": 45.9,
+   "lon": -77.28,
+   "bbox": [
+    -77.62871,
+    45.85272,
+    -77.23526,
+    46.04321
+   ]
+  },
+  {
+   "id": "trenton",
+   "name": "8 Wing Trenton",
+   "prov": "ON",
+   "lat": 44.12,
+   "lon": -77.53,
+   "bbox": [
+    -77.56107,
+    44.09936,
+    -77.50331,
+    44.14064
+   ]
+  },
+  {
+   "id": "connaught",
+   "name": "Connaught Range",
+   "prov": "ON",
+   "lat": 45.36445,
+   "lon": -75.90334,
+   "bbox": [
+    -75.94608,
+    45.34298,
+    -75.8424,
+    45.40532
+   ]
+  },
+  {
+   "id": "kingston",
+   "name": "CFB Kingston",
+   "prov": "ON",
+   "lat": 44.23,
+   "lon": -76.46,
+   "bbox": [
+    -76.4669,
+    44.23265,
+    -76.41086,
+    44.27704
+   ]
+  },
+  {
+   "id": "farnham",
+   "name": "Det Farnham",
+   "prov": "QC",
+   "lat": 45.31208,
+   "lon": -73.01016,
+   "bbox": [
+    -73.05342,
+    45.28515,
+    -72.98801,
+    45.34672
+   ]
+  },
+  {
+   "id": "valcartier",
+   "name": "BFC Valcartier",
+   "prov": "QC",
+   "lat": 46.89352,
+   "lon": -71.49353,
+   "bbox": [
+    -71.73248,
+    46.83718,
+    -71.40839,
+    47.09584
+   ]
+  },
+  {
+   "id": "bagotville",
+   "name": "BFC Bagotville",
+   "prov": "QC",
+   "lat": 48.33,
+   "lon": -70.99,
+   "bbox": [
+    -71.02404,
+    48.30912,
+    -70.95863,
+    48.35043
+   ]
+  },
+  {
+   "id": "gagetown",
+   "name": "CFB Gagetown",
+   "prov": "NB",
+   "lat": 45.84207,
+   "lon": -66.45235,
+   "bbox": [
+    -66.57234,
+    45.42544,
+    -66.06216,
+    45.89192
+   ]
+  },
+  {
+   "id": "greenwood",
+   "name": "CFB Greenwood",
+   "prov": "NS",
+   "lat": 44.98,
+   "lon": -64.92,
+   "bbox": [
+    -64.9431,
+    44.96613,
+    -64.88371,
+    44.99734
+   ]
+  },
+  {
+   "id": "goosebay",
+   "name": "5 Wing Goose Bay",
+   "prov": "NL",
+   "lat": 53.30421,
+   "lon": -60.41176,
+   "bbox": [
+    -60.49862,
+    53.2687,
+    -60.35202,
+    53.32759
+   ]
+  }
+ ]
+}

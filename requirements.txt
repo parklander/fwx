@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+requests
+numpy
+tifffile
+pyproj
+reportlab
+tzdata

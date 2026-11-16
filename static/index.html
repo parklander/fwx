@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CWFIS Fire Weather Forecast</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <h1>Fire Weather Forecast</h1>
+  <label>Area <select id="aoi"></select></label>
+  <button type="button" id="country" class="btn2" title="Show all areas across Canada">All of Canada</button>
+  <label>Date <input type="date" id="date"></label>
+  <label>Layer <select id="layer"></select></label>
+  <a id="pdf" class="btn" target="_blank" rel="noopener">Forecast PDF ↗</a>
+  <span id="status" role="status"></span>
+</header>
+<main>
+  <div id="map"></div>
+  <aside id="legend" hidden>
+    <b id="legend-title"></b>
+    <img id="legend-img" alt="Legend">
+    <div class="sub" id="legend-date"></div>
+  </aside>
+</main>
+<footer>Daily grids from the <a href="https://cwfis.cfs.nrcan.gc.ca/" target="_blank" rel="noopener">Canadian Wildland Fire Information System</a> (NRCan), noon local standard time. The PDF covers the day before the selected date through the end of the CWFIS forecast.</footer>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

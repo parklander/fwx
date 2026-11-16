@@ -6,6 +6,10 @@
 <title>CWFIS Fire Weather Forecast</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <link rel="stylesheet" href="/static/style.css">
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/static/icon-192.png">
+<link rel="apple-touch-icon" href="/static/icon-192.png">
+<meta name="theme-color" content="#1d2329">
 </head>
 <body>
 <header>
@@ -16,9 +20,14 @@
   <label>Layer <select id="layer"></select></label>
   <a id="pdf" class="btn" target="_blank" rel="noopener">Forecast PDF ↗</a>
   <span id="status" role="status"></span>
+  <span class="spacer"></span>
+  <button type="button" id="alert-chip" class="chip" title="ECCC weather alerts for the areas">Alerts</button>
+  <button type="button" id="bell" class="chip" title="Get a notification when ECCC issues a new alert">🔔 Notify me</button>
 </header>
 <main>
   <div id="map"></div>
+  <aside id="alerts" class="panel" hidden></aside>
+  <aside id="notify" class="panel" hidden></aside>
   <aside id="legend" hidden>
     <b id="legend-title"></b>
     <img id="legend-img" alt="Legend">

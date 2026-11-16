@@ -6,20 +6,25 @@ import json
 import logging
 import os
 import re
+import threading
+from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.concurrency import run_in_threadpool
 
+import alerts
 import cwfis
+import push
 import report_pdf
 
 ROOT = Path(__file__).resolve().parent
 AOI_FILE = ROOT / "aois.json"
+DATA = ROOT / "data"  # alert state, push keys and subscriptions (not in git)
 MAX_DAYS = 12  # longest report
 TZ = ZoneInfo(os.environ.get("FW_TZ", "America/Winnipeg"))  # decides "today" (obs vs forecast) and the issue time
 
@@ -29,7 +34,19 @@ def today():
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
 log = logging.getLogger("app")
-app = FastAPI(title="CWFIS fire weather forecast")
+pusher = push.Push(DATA)
+wx_alerts = alerts.Alerts(AOI_FILE, DATA / "alerts_state.json", on_new=pusher.notify_alert)
+_stop = threading.Event()
+
+
+@asynccontextmanager
+async def lifespan(app):
+    threading.Thread(target=wx_alerts.loop, args=(_stop,), name="alerts", daemon=True).start()
+    yield
+    _stop.set()
+
+
+app = FastAPI(title="CWFIS fire weather forecast", lifespan=lifespan)
 
 
 def load_areas():
@@ -86,10 +103,66 @@ async def forecast_pdf(aoi: str, start: str | None = Query(None, pattern=r"^\d{4
     rows = await run_in_threadpool(cwfis.area_daily, area, first, last)
     if not rows:
         raise HTTPException(502, "CWFIS returned no values for this area")
-    pdf = await run_in_threadpool(report_pdf.build, area, rows, today(), datetime.now(TZ))
+    in_effect = (wx_alerts.for_area(area["id"]) or {}).get("alerts", [])
+    pdf = await run_in_threadpool(report_pdf.build, area, rows, today(), datetime.now(TZ), in_effect)
     name = re.sub(r"[^A-Za-z0-9]+", "-", area["name"]).strip("-")
     return Response(pdf, media_type="application/pdf",
                     headers={"Content-Disposition": f'inline; filename="fire-weather-{name}-{first.isoformat()}.pdf"'})
+
+
+# ---- ECCC alerts and push notifications ----------------------------------------------------------
+
+@app.get("/api/alerts")
+def weather_alerts():
+    return {"poll_min": alerts.POLL_MIN, "areas": wx_alerts.view()}
+
+
+@app.get("/api/push/key")
+def push_key():
+    return {"key": pusher.public_key}
+
+
+@app.post("/api/push/subscribe")
+def push_subscribe(subscription: dict = Body(...), areas: list[str] | str = Body(...)):
+    if isinstance(areas, str) and areas != "all":
+        raise HTTPException(400, 'areas must be a list of area ids or "all"')
+    _, known = load_areas()
+    ids = {a["id"] for a in known}
+    if areas != "all" and not set(areas) <= ids:
+        raise HTTPException(400, "unknown area")
+    try:
+        return pusher.subscribe(subscription, areas)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/push/status")
+def push_status(endpoint: str = Body(..., embed=True)):
+    return pusher.status(endpoint)
+
+
+@app.post("/api/push/unsubscribe")
+def push_unsubscribe(endpoint: str = Body(..., embed=True)):
+    pusher.unsubscribe(endpoint)
+    return {"subscribed": False, "areas": []}
+
+
+@app.post("/api/push/test")
+async def push_test(endpoint: str = Body(..., embed=True)):
+    if not await run_in_threadpool(pusher.send_test, endpoint):
+        raise HTTPException(400, "couldn't send to this browser; turn notifications off and on again")
+    return {"sent": True}
+
+
+@app.get("/sw.js")
+def service_worker():
+    # served from the root so it can handle notifications for the whole site
+    return FileResponse(ROOT / "static" / "sw.js", media_type="application/javascript", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/manifest.webmanifest")
+def manifest():
+    return FileResponse(ROOT / "static" / "manifest.webmanifest", media_type="application/manifest+json")
 
 
 @app.get("/")

@@ -17,7 +17,8 @@
   const { default: defAoi, areas } = await (await fetch("/api/areas")).json();
   const byId = Object.fromEntries(areas.map((a) => [a.id, a]));
   $("aoi").innerHTML = areas.map((a) => `<option value="${a.id}">${a.name}${a.prov ? ` (${a.prov})` : ""}</option>`).join("");
-  $("aoi").value = byId[prefs.aoi] ? prefs.aoi : defAoi || areas[0].id;
+  const linked = new URLSearchParams(location.search).get("aoi");  // e.g. from a notification
+  $("aoi").value = byId[linked] ? linked : byId[prefs.aoi] ? prefs.aoi : defAoi || areas[0].id;
   // every area: its box (or a dot where it has none) with a label; click one to select it
   const areaLayer = L.layerGroup().addTo(map);
   const shapes = {};
@@ -140,8 +141,147 @@
   $("pdf").onclick = () => status("Building the PDF — CWFIS takes 10–30 s for a full forecast…");
   window.addEventListener("focus", () => { if ($("status").textContent.startsWith("Building")) status(""); });
 
+  // ---- ECCC alerts ----------------------------------------------------------------------------------
+  const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+  const RANK = { warning: 3, watch: 2, statement: 1 };
+  const worst = (list) => list.reduce((w, x) => (RANK[x.level] > RANK[w] ? x.level : w), "statement");
+  const when = (t) => new Date(t).toLocaleString("en-CA", { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
+  let ALERTS = null, alertsOpen = false;
+
+  function markAlertedAreas() {
+    const by = Object.fromEntries((ALERTS?.areas || []).map((a) => [a.id, a.alerts]));
+    for (const a of areas) shapes[a.id].eachLayer((x) => {
+      const tt = x.getTooltip?.();
+      if (!tt) return;
+      const list = by[a.id] || [];
+      tt.setContent(list.length ? `⚠ ${esc(a.name)}` : esc(a.name));
+      const el = tt.getElement();
+      if (el) {
+        el.classList.toggle("alert", list.length > 0);
+        el.classList.remove("lvl-warning", "lvl-watch", "lvl-statement");
+        if (list.length) el.classList.add(`lvl-${worst(list)}`);
+      }
+    });
+    declutter();
+  }
+
+  function renderAlerts() {
+    if (!ALERTS) return;
+    const active = ALERTS.areas.filter((a) => a.alerts.length);
+    const chip = $("alert-chip");
+    chip.className = "chip" + (active.length ? ` on lvl-${worst(active.flatMap((a) => a.alerts))}` : "");
+    chip.textContent = active.length ? `⚠ Alerts: ${active.length} area${active.length > 1 ? "s" : ""}` : "No alerts";
+    markAlertedAreas();
+    const panel = $("alerts");
+    if (!alertsOpen) { panel.hidden = true; return; }
+    const sel = ALERTS.areas.find((a) => a.id === $("aoi").value);
+    const mine = sel?.alerts || [];
+    const item = (x) => `<div class="wx-alert lvl-${x.level}"><div class="n">${esc(x.name)}</div>
+      <div class="sub">${x.issued ? `Issued ${when(x.issued)}` : ""}${x.expires ? ` · expires ${when(x.expires)}` : ""}</div>
+      ${x.text ? `<div class="t">${esc(x.text)}</div>` : ""}
+      ${x.link || sel?.page ? `<div class="sub"><a href="${esc(x.link || sel.page)}" target="_blank" rel="noopener">Full text on weather.gc.ca ↗</a></div>` : ""}</div>`;
+    const others = active.filter((a) => a !== sel);
+    panel.innerHTML = `<h2><span>ECCC alerts · ${esc(byId[$("aoi").value]?.name)}</span><button class="x" id="al-close" aria-label="Close">×</button></h2>
+      ${mine.length ? mine.map(item).join("") : `<div class="sub">No alerts in effect${sel?.region ? ` for ${esc(sel.region)}` : ""}.
+        ${sel?.page ? `<a href="${esc(sel.page)}" target="_blank" rel="noopener">Check weather.gc.ca ↗</a>` : ""}</div>`}
+      ${sel?.error ? `<div class="sub">Last check failed; showing the previous result.</div>` : ""}
+      ${others.length ? `<div class="others"><div class="sub">Other areas</div>${others.map((a) =>
+        `<button data-id="${esc(a.id)}" class="lvl-${worst(a.alerts)}"><b>⚠</b> ${esc(a.name)}: ${esc(a.alerts.map((x) => x.name).join(", "))}</button>`).join("")}</div>` : ""}
+      <div class="sub" style="margin-top:8px">Checked every ${ALERTS.poll_min} min${sel?.checked ? `, last at ${new Date(sel.checked).toLocaleTimeString("en-CA", { hour: "2-digit", minute: "2-digit", hour12: false })}` : ""}.</div>`;
+    panel.hidden = false;
+    $("al-close").onclick = () => { alertsOpen = false; panel.hidden = true; };
+    panel.querySelectorAll(".others button").forEach((b) => (b.onclick = () => { $("aoi").value = b.dataset.id; $("aoi").onchange(); }));
+  }
+  async function loadAlerts() {
+    try { ALERTS = await (await fetch("/api/alerts")).json(); } catch (_) { return; }
+    renderAlerts();
+  }
+  $("alert-chip").onclick = () => { alertsOpen = !alertsOpen; $("notify").hidden = true; renderAlerts(); };
+  const aoiChange = $("aoi").onchange;
+  $("aoi").onchange = () => { aoiChange(); renderAlerts(); };
+  setInterval(loadAlerts, 2 * 60e3);
+
+  // ---- push notifications (work with the page closed) ------------------------------------------------
+  const pushable = "serviceWorker" in navigator && "PushManager" in window && "Notification" in window;
+  const b64 = (s) => Uint8Array.from(atob((s + "=".repeat((4 - (s.length % 4)) % 4)).replace(/-/g, "+").replace(/_/g, "/")), (c) => c.charCodeAt(0));
+  const post = async (url, body) => {
+    const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || r.statusText);
+    return d;
+  };
+  let swReg = null, mySub = { subscribed: false, areas: [] };
+  async function pushState() {
+    if (!pushable) return;
+    swReg = swReg || await navigator.serviceWorker.register("/sw.js");
+    const sub = await swReg.pushManager.getSubscription();
+    mySub = sub ? await post("/api/push/status", { endpoint: sub.endpoint }).catch(() => ({ subscribed: false, areas: [] }))
+                : { subscribed: false, areas: [] };
+    $("bell").textContent = mySub.subscribed ? "🔔 Notifications on" : "🔔 Notify me";
+    $("bell").classList.toggle("on", mySub.subscribed);
+  }
+  function renderNotify(msg) {
+    const p = $("notify");
+    const ios = /iPhone|iPad/.test(navigator.userAgent) && !navigator.standalone;
+    if (!pushable) {
+      p.innerHTML = `<h2><span>Notifications</span><button class="x" id="nt-close">×</button></h2>
+        <div class="sub">${ios ? "On iPhone or iPad, tap Share → <b>Add to Home Screen</b>, then open the site from the Home Screen icon and turn notifications on there."
+          : "This browser can't receive web notifications."}</div>`;
+    } else {
+      const all = mySub.areas === "all";
+      const chosen = new Set(all ? [] : mySub.areas || []);
+      if (!mySub.subscribed) chosen.add($("aoi").value);
+      p.innerHTML = `<h2><span>Notify me of new ECCC alerts</span><button class="x" id="nt-close">×</button></h2>
+        <div class="sub">A notification on this device whenever ECCC issues a new warning, watch or statement for these areas, even with this page closed.</div>
+        <label style="display:block;margin-top:8px"><input type="checkbox" id="nt-all"${all ? " checked" : ""}> <b>All areas</b></label>
+        <div class="areas"${all ? ' style="opacity:.4;pointer-events:none"' : ""}>${areas.map((a) =>
+          `<label><input type="checkbox" value="${esc(a.id)}"${chosen.has(a.id) ? " checked" : ""}> ${esc(a.name)}</label>`).join("")}</div>
+        <div class="row"><button class="primary" id="nt-save">${mySub.subscribed ? "Save" : "Turn on"}</button>
+          ${mySub.subscribed ? `<button id="nt-test">Send a test</button><button id="nt-off">Turn off</button>` : ""}</div>
+        ${msg ? `<div class="sub" style="margin-top:8px">${esc(msg)}</div>` : ""}`;
+      $("nt-all").onchange = (e) => { const box = p.querySelector(".areas"); box.style.opacity = e.target.checked ? ".4" : ""; box.style.pointerEvents = e.target.checked ? "none" : ""; };
+      $("nt-save").onclick = () => turnOn().catch((e) => renderNotify(`Couldn't turn on notifications: ${e.message}`));
+      if ($("nt-test")) $("nt-test").onclick = async () => {
+        const sub = await swReg.pushManager.getSubscription();
+        post("/api/push/test", { endpoint: sub.endpoint }).then(() => renderNotify("Test sent; it should appear in a few seconds."), (e) => renderNotify(e.message));
+      };
+      if ($("nt-off")) $("nt-off").onclick = turnOff;
+    }
+    $("nt-close").onclick = () => { p.hidden = true; };
+    p.hidden = false;
+  }
+  async function turnOn() {
+    const p = $("notify");
+    const chosen = $("nt-all").checked ? "all" : [...p.querySelectorAll(".areas input:checked")].map((i) => i.value);
+    if (chosen !== "all" && !chosen.length) return renderNotify("Pick at least one area.");
+    if (await Notification.requestPermission() !== "granted") return renderNotify("Notifications are blocked for this site; allow them in the browser's site settings.");
+    let sub = await swReg.pushManager.getSubscription();
+    if (!sub) {
+      const { key } = await (await fetch("/api/push/key")).json();
+      sub = await swReg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64(key) });
+    }
+    mySub = await post("/api/push/subscribe", { subscription: sub.toJSON(), areas: chosen });
+    await pushState();
+    renderNotify(chosen === "all" ? "On for all areas." : `On for ${chosen.length} area${chosen.length > 1 ? "s" : ""}.`);
+  }
+  async function turnOff() {
+    const sub = await swReg.pushManager.getSubscription();
+    if (sub) { await post("/api/push/unsubscribe", { endpoint: sub.endpoint }).catch(() => {}); await sub.unsubscribe(); }
+    await pushState();
+    renderNotify("Notifications are off on this device.");
+  }
+  $("bell").onclick = async () => {
+    if (!$("notify").hidden) { $("notify").hidden = true; return; }
+    alertsOpen = false; $("alerts").hidden = true;
+    await pushState().catch(() => {});
+    renderNotify();
+  };
+  pushState().catch(() => {});
+
   showCountry();
   showArea(false);
   showLayer();
   updatePdfLink();
+  loadAlerts();
+  if (linked) showArea(true);
 })();

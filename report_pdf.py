@@ -21,6 +21,10 @@ DANGER = {
 COMPASS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"]
 
 
+def _esc(s):
+    return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 def _f(v, nd=0):
     return "—" if v is None else f"{v:.{nd}f}"
 
@@ -32,7 +36,10 @@ def _wind(row):
     return (f"{COMPASS[int((d + 11.25) // 22.5) % 16]} " if d is not None else "") + f"{row['ws']:.0f}"
 
 
-def build(area, rows, today=None, issued=None):
+ALERT_COLOURS = {"warning": "#c62828", "watch": "#e07b00", "statement": "#5b6670"}
+
+
+def build(area, rows, today=None, issued=None, alerts_in_effect=()):
     today = today or date.today()
     issued = issued or datetime.now().astimezone()
     has_box = bool(area.get("bbox"))
@@ -50,6 +57,20 @@ def build(area, rows, today=None, issued=None):
                   + (f" · {area['prov']}" if area.get("prov") else ""), small),
         Spacer(1, 8),
     ]
+
+    if alerts_in_effect:
+        ast = ParagraphStyle("al", parent=body, fontSize=10, leading=13)
+        story.append(Paragraph("<b>ECCC alerts in effect</b>", body))
+        for a in alerts_in_effect:
+            col = ALERT_COLOURS.get(a.get("level"), "#5b6670")
+            when = ""
+            if a.get("issued"):
+                try:
+                    when = f" — issued {datetime.fromisoformat(a['issued'].replace('Z', '+00:00')).astimezone(issued.tzinfo):%a %b %-d %H:%M}"
+                except ValueError:
+                    pass
+            story.append(Paragraph(f'<font color="{col}"><b>{_esc(a["name"])}</b></font>{when}', ast))
+        story.append(Spacer(1, 8))
 
     fc = [r for r in rows if date.fromisoformat(r["date"]) >= today]
     if fc:

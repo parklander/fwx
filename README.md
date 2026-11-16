@@ -1,12 +1,25 @@
 # CWFIS Fire Weather Forecast
 
-A small web page with three pickers (area, date, layer) over a map of the CWFIS daily fire weather grids, plus a forecast PDF for the selected area. Everything comes from the Canadian Wildland Fire Information System (NRCan): no model downloads and no stored data.
+A small web page with three pickers (area, date, layer) over a map of the CWFIS daily fire weather grids, plus a forecast PDF for the selected area. Fire weather comes from the Canadian Wildland Fire Information System (NRCan) and alerts from Environment and Climate Change Canada: no model downloads.
 
 - **Map:** the CWFIS layer (FWI, ISI, FFMC, BUI, DMC, DC, fire danger, head fire intensity) for the chosen date, straight from CWFIS's WMS, with its legend. The area's reference point and bounding box are drawn on top.
 - **Forecast PDF:** for the chosen area, from the day before the selected date to the end of the CWFIS forecast (up to 12 days). It includes:
   - noon temperature, RH, wind and rain, the FWI System codes and indices, and the CWFIS fire danger, at the area's reference point;
   - the highest FWI and danger of any cell in the area's bounding box;
   - an FWI chart coloured by danger, and the source notes.
+
+## Alerts and notifications
+
+The server checks ECCC public weather alerts (warnings, watches, statements, including Special Air Quality Statements) for every area every 5 minutes:
+
+- An area with an `alert_feed` code in `aois.json` (CFB Shilo uses `mbrm67`) reads that ECCC alert region's feed, the same one weather.gc.ca's warnings page uses. To find a code, open the region on weather.gc.ca/warnings and take it from its RSS link.
+- Other areas use the MSC GeoMet alerts API at the area's reference point.
+
+On the page, areas with alerts show ⚠ on the map, the **Alerts** button lists them, and the forecast PDF lists any alerts in effect at the top.
+
+**🔔 Notify me** turns on push notifications on that device for the areas you tick (or all areas). They arrive even with the page closed, whenever ECCC issues a new alert, and tapping one opens the site on that area. Android and desktop browsers work directly. On iPhone or iPad, add the site to the Home Screen first (Share → Add to Home Screen) and turn notifications on from there; Apple only allows web notifications for installed sites.
+
+The server keeps its notification key, the subscriptions and the alerts it has already announced in `data/`, which isn't in git. Alerts already in effect when the server first starts aren't announced, and neither are alerts that were already announced before a restart. `FW_CONTACT` (default `https://fwx.rtams.ca`) is the contact address sent to the browsers' push services.
 
 ## Run locally
 

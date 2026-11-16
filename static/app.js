@@ -6,14 +6,14 @@
   const iso = (d) => d.toISOString().slice(0, 10);
   const today = iso(new Date(Date.now() - new Date().getTimezoneOffset() * 60000));
   const prefs = (() => { try { return JSON.parse(localStorage.getItem("cwfis-prefs") || "{}"); } catch (_) { return {}; } })();
-  const save = () => { try { localStorage.setItem("cwfis-prefs", JSON.stringify({ aoi: $("aoi").value, layer: $("layer").value, wind: $("wind").value })); } catch (_) {} };
+  const save = () => { try { localStorage.setItem("cwfis-prefs", JSON.stringify({ aoi: $("aoi").value, layer: $("layer").value, wind: $("wind").value, precip: $("precip").value })); } catch (_) {} };
 
   const map = L.map("map", { zoomControl: true }).setView([55, -97], 4);
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     maxZoom: 18, attribution: "© OpenStreetMap contributors · Fire weather © NRCan CWFIS",
   }).addTo(map);
 
-  let wind = null;  // RDPS wind overlay, set up once the wind metadata arrives
+  let wind = null;  // RDPS wind overlay, set up once the RDPS metadata arrives
 
   // ---- areas -----------------------------------------------------------------------------------
   const { default: defAoi, areas } = await (await fetch("/api/areas")).json();
@@ -336,86 +336,182 @@
   };
   pushState().catch(() => {});
 
-  // ---- RDPS 10 m wind: particles or arrows for the next 48 hours ------------------------------------
+  // ---- RDPS overlays for the next 48 hours: 10 m wind (particles or arrows) and precipitation rate by type ----
+  // Both use the hour bar at the top of the map. Frames are byte rasters on a Web Mercator grid (see rdps.py).
   const COMPASS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
   const hourLabel = (t) => t.toLocaleString("en-CA", { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false, timeZoneName: "short" });
-  let WM = null, windHours = [], windFrames = new Map(), windShown = null, playing = null;
-  const windHour = () => windHours[+$("wb-hour").value];
+  let WM = null, rdpsHours = [], rdpsFrames = new Map(), shown = {}, playing = null, metaTimer = null;
+  const curHour = () => rdpsHours[+$("wb-hour").value];
+  const windOn = () => $("wind").value !== "off", precipOn = () => $("precip").value !== "off";
 
-  async function loadWindMeta() {
+  // Precipitation rate (mm/h) coloured by type, as in the fire-modeling viewer: one intensity ramp per type,
+  // transparent where dry. Index = type: 1 rain, 2 rain/snow mix, 3 freezing rain, 4 ice pellets, 5 snow.
+  const PTYPE = [
+    null,
+    { key: "Rain", stops: [[0.05, "#9ec9ea", 0.35], [0.5, "#4a90d9", 0.8], [2, "#2a4fc8"], [5, "#a23bc4"], [10, "#f2c94c"], [25, "#ff4a3d"]] },
+    { key: "Mix", stops: [[0.05, "#f3c4e8", 0.4], [0.5, "#e590d6", 0.85], [2, "#cc4fbd"], [5, "#8e2386"]] },
+    { key: "Frz rain", stops: [[0.05, "#ffb3a8", 0.5], [0.5, "#ff7a6b", 0.9], [2, "#e5322a"], [5, "#a30d0d"]] },
+    { key: "Pellets", stops: [[0.05, "#ffd9a0", 0.5], [0.5, "#ffb760", 0.9], [2, "#f08a1c"], [5, "#c25e00"]] },
+    { key: "Snow", stops: [[0.05, "#eefaff", 0.4], [0.5, "#c4efff", 0.85], [2, "#7fd6f2"], [5, "#2fb0d6"]] },
+  ];
+  const hex = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+  function rampColor(st, v) {
+    if (v <= st[0][0]) return [...hex(st[0][1]), st[0][2] ?? 1];
+    for (let i = 1; i < st.length; i++) {
+      if (v <= st[i][0]) {
+        const [v0, c0, a0 = 1] = st[i - 1], [v1, c1, a1 = 1] = st[i];
+        const t = (v - v0) / (v1 - v0), A = hex(c0), Bc = hex(c1);
+        return [0, 1, 2].map((k) => A[k] + (Bc[k] - A[k]) * t).concat(a0 + (a1 - a0) * t);
+      }
+    }
+    const l = st[st.length - 1];
+    return [...hex(l[1]), l[2] ?? 1];
+  }
+  // precip byte -> (type, mm/h): 0 no data, 1 dry, else 2 + (type-1)*levels + level on a log scale
+  const precipOf = (q) => {
+    if (q < 2) return null;
+    const P = WM.precip, k = q - 2, lvl = k % P.levels;
+    return { type: Math.floor(k / P.levels) + 1, rate: P.min * Math.pow(P.top / P.min, lvl / (P.levels - 1)) };
+  };
+  let PLUT = null;
+  function precipLut() {  // precip byte -> RGBA (little-endian ABGR)
+    if (PLUT) return PLUT;
+    PLUT = new Uint32Array(256);
+    for (let q = 2; q < 256; q++) {
+      const p = precipOf(q);
+      if (!p || !PTYPE[p.type]) continue;
+      const [r, g, b, a] = rampColor(PTYPE[p.type].stops, Math.min(p.rate, 30));
+      PLUT[q] = ((Math.round(a * 255) << 24) | (Math.round(b) << 16) | (Math.round(g) << 8) | Math.round(r)) >>> 0;
+    }
+    return PLUT;
+  }
+  let pCanvas = null, pctx, pImg, pImg32, pOverlay = null;
+  function drawPrecip(q) {
+    if (!pCanvas) {
+      pCanvas = document.createElement("canvas");
+      pCanvas.width = WM.width; pCanvas.height = WM.height;
+      pctx = pCanvas.getContext("2d");
+      pImg = pctx.createImageData(WM.width, WM.height); pImg32 = new Uint32Array(pImg.data.buffer);
+      const B = WM.bounds;  // rows are already Web Mercator, so stretching over the bounds lines up
+      pOverlay = L.svgOverlay(pCanvas, [[B.south, B.west], [B.north, B.east]], { opacity: 0.85, interactive: false });
+    }
+    if (!q) { if (map.hasLayer(pOverlay)) pOverlay.remove(); return; }
+    const T = precipLut();
+    for (let i = 0; i < q.length; i++) pImg32[i] = T[q[i]];
+    pctx.putImageData(pImg, 0, 0);
+    if (!map.hasLayer(pOverlay)) pOverlay.addTo(map);
+  }
+  function drawPrecipKey() {  // one gradient segment per type, 0.1 → 10 mm/h each
+    const c = $("wb-pkey"), ctx = c.getContext("2d"), w = c.width, n = 5, bw = w / n;
+    ctx.clearRect(0, 0, w, c.height);
+    for (let k = 1; k <= n; k++) {
+      for (let x = 0; x < bw - 2; x++) {
+        const v = Math.exp(Math.log(0.1) + (x / (bw - 3)) * (Math.log(10) - Math.log(0.1)));
+        const [r, g, b, a] = rampColor(PTYPE[k].stops, v);
+        ctx.fillStyle = `rgba(${r},${g},${b},${Math.max(a, 0.35)})`;
+        ctx.fillRect((k - 1) * bw + x, 0, 1, c.height);
+      }
+    }
+    $("wb-pticks").innerHTML = PTYPE.slice(1).map((p, i) => `<span style="left:${((i + 0.5) / n) * 100}%">${p.key}</span>`).join("");
+  }
+
+  async function loadRdpsMeta() {
     let m;
-    try { m = await (await fetch("/api/wind")).json(); } catch (_) { return; }
-    const keep = windHour()?.valid;
+    try { m = await (await fetch("/api/rdps")).json(); } catch (_) { return; }
+    const keep = curHour()?.valid;
     WM = m;
     if (!wind && m.width) { wind = WindLayer(map, $("wind-canvas"), m, { light: !isSat($("layer").value) }); wind.setMode("off"); }
     // hours from the current hour on (the run starts a little before now)
     const now = Date.now() - 3600e3;
-    windHours = (m.hours || []).map((h) => ({ ...h, t: new Date(h.valid.replace("Z", ":00Z")) })).filter((h) => h.t.getTime() >= now);
-    $("wb-hour").max = Math.max(0, windHours.length - 1);
-    const k = windHours.findIndex((h) => h.valid === keep);
+    rdpsHours = (m.hours || []).map((h) => ({ ...h, t: new Date(h.valid.replace("Z", ":00Z")) })).filter((h) => h.t.getTime() >= now);
+    $("wb-hour").max = Math.max(0, rdpsHours.length - 1);
+    const k = rdpsHours.findIndex((h) => h.valid === keep);
     $("wb-hour").value = k >= 0 ? k : 0;
     $("wb-src").textContent = m.run ? `RDPS ${m.run.slice(8)}Z ${m.run.slice(6, 8)}/${m.run.slice(4, 6)}` : "";
-    if ($("wind").value !== "off") showWind();
+    // re-check every 30 s until a run is in, then every 10 min
+    clearTimeout(metaTimer);
+    metaTimer = setTimeout(loadRdpsMeta, m.run ? 10 * 60e3 : 30e3);
+    showRdps();
   }
 
-  function windFrame(run, fh) {
-    const key = `${run}/${fh}`;
-    if (!windFrames.has(key)) {
-      const get = (v) => fetch(`/api/wind/${run}/${v}/${fh}`).then((r) => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); }).then((b) => new Uint8Array(b));
-      windFrames.set(key, Promise.all([get("wspd"), get("wdir")]).catch((e) => { windFrames.delete(key); throw e; }));
-      while (windFrames.size > 16) windFrames.delete(windFrames.keys().next().value);
+  function frame(run, v, fh) {
+    const key = `${run}/${v}/${fh}`;
+    if (!rdpsFrames.has(key)) {
+      rdpsFrames.set(key, fetch(`/api/rdps/${run}/${v}/${fh}`)
+        .then((r) => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); }).then((b) => new Uint8Array(b))
+        .catch((e) => { rdpsFrames.delete(key); throw e; }));
+      while (rdpsFrames.size > 40) rdpsFrames.delete(rdpsFrames.keys().next().value);
     }
-    return windFrames.get(key);
+    return rdpsFrames.get(key);
   }
+  // the frames the current settings need for an hour
+  const framesFor = (run, h) => Promise.all([
+    windOn() ? frame(run, "wspd", h.fh) : null, windOn() ? frame(run, "wdir", h.fh) : null,
+    precipOn() && h.precip ? frame(run, "precip", h.fh) : null,
+  ]);
 
-  async function showWind() {
-    const mode = $("wind").value;
-    $("windbar").hidden = mode === "off";
-    if (mode === "off") { stopPlay(); wind?.setMode("off"); return; }
-    if (!WM?.run || !windHours.length) {
-      $("wb-time").textContent = WM?.status === "error" ? "Wind unavailable right now"
-        : WM?.run ? "The wind forecast is out of date" : "Wind is still downloading…";
+  async function showRdps() {
+    const mode = $("wind").value, pOn = precipOn();
+    $("windbar").hidden = mode === "off" && !pOn;
+    $("wb-pk").hidden = !pOn;
+    if (pOn) drawPrecipKey();
+    if (mode === "off" && !pOn) { stopPlay(); wind?.setMode("off"); if (pOverlay) drawPrecip(null); return; }
+    if (!WM?.run || !rdpsHours.length) {
+      $("wb-time").textContent = WM?.status === "error" ? "RDPS forecast unavailable right now"
+        : WM?.run ? "The RDPS forecast is out of date" : "RDPS forecast is still downloading…";
       wind?.setFrames(null); return;
     }
     if (wind.mode !== mode) wind.setMode(mode);
-    const h = windHour(), run = WM.run;
+    const h = curHour(), run = WM.run;
     $("wb-time").textContent = hourLabel(h.t);
     try {
-      const [spd, dir] = await windFrame(run, h.fh);
-      if (windHour() !== h || $("wind").value === "off") return;  // moved on while loading
-      windShown = { spd, dir };
+      const [spd, dir, pq] = await framesFor(run, h);
+      if (curHour() !== h) return;  // moved on while loading
+      shown = { spd, dir, pq };
       wind.setFrames(spd, dir, "wspd", "wdir");
-      const nxt = windHours[+$("wb-hour").value + 1];
-      if (nxt) windFrame(run, nxt.fh).catch(() => {});  // prefetch the next hour
+      drawPrecip(pOn ? pq : null);
+      updateReadout();
+      const nxt = rdpsHours[+$("wb-hour").value + 1];
+      if (nxt) framesFor(run, nxt).catch(() => {});  // prefetch the next hour
     } catch (_) {
       $("wb-time").textContent = "Couldn't load this hour";
     }
   }
 
-  // value under the pointer (or a tap)
+  // values under the pointer (or a tap)
   const mercY = (lat) => Math.log(Math.tan(Math.PI / 4 + (lat * Math.PI) / 360));
-  function readWind(ll) {
-    if (!WM || !windShown || $("wind").value === "off") return;
+  let lastLL = null;
+  function updateReadout(ll = lastLL) {
+    lastLL = ll;
+    if (!WM?.run || $("windbar").hidden) return;
+    if (!ll) { $("wb-read").textContent = "Hover or tap the map for values"; return; }
     const B = WM.bounds;
     const x = Math.floor(((ll.lng - B.west) / (B.east - B.west)) * WM.width);
     const y = Math.floor(((mercY(B.north) - mercY(ll.lat)) / (mercY(B.north) - mercY(B.south))) * WM.height);
     const i = x >= 0 && x < WM.width && y >= 0 && y < WM.height ? y * WM.width + x : -1;
-    const q = i >= 0 ? windShown.spd[i] : 0, d = i >= 0 ? windShown.dir[i] : 0;
-    $("wb-read").textContent = q && d ? `${q - 1} km/h from ${COMPASS[Math.round(((d - 1) * 2) / 22.5) % 16]} (${(d - 1) * 2}°)` : "No wind data here";
+    const parts = [];
+    if (precipOn()) {
+      const q = i >= 0 && shown.pq ? shown.pq[i] : 0, p = q ? precipOf(q) : null;
+      parts.push(!q ? "No precip data" : p ? `${WM.precip.types[p.type]} ${p.rate < 1 ? p.rate.toFixed(2) : p.rate.toFixed(1)} mm/h` : "Dry");
+    }
+    if (windOn()) {
+      const q = i >= 0 && shown.spd ? shown.spd[i] : 0, d = i >= 0 && shown.dir ? shown.dir[i] : 0;
+      parts.push(q && d ? `${q - 1} km/h from ${COMPASS[Math.round(((d - 1) * 2) / 22.5) % 16]} (${(d - 1) * 2}°)` : "No wind data");
+    }
+    $("wb-read").textContent = parts.join(" · ");
   }
-  map.on("mousemove click", (e) => readWind(e.latlng));
+  map.on("mousemove click", (e) => updateReadout(e.latlng));
 
   function step(n) {
-    const k = Math.min(Math.max(+$("wb-hour").value + n, 0), windHours.length - 1);
-    $("wb-hour").value = k; showWind();
+    const k = Math.min(Math.max(+$("wb-hour").value + n, 0), rdpsHours.length - 1);
+    $("wb-hour").value = k; showRdps();
     return k;
   }
   function stopPlay() { clearTimeout(playing); playing = null; $("wb-play").textContent = "▶︎"; $("wb-play").classList.remove("on"); }
   async function playStep() {
-    if (+$("wb-hour").value >= windHours.length - 1) $("wb-hour").value = -1;
+    if (+$("wb-hour").value >= rdpsHours.length - 1) $("wb-hour").value = -1;
     step(1);
-    const h = windHour();
-    await windFrame(WM.run, h.fh).catch(() => {});
+    await framesFor(WM.run, curHour()).catch(() => {});
     if (playing) playing = setTimeout(playStep, 900);
   }
   $("wb-play").onclick = () => {
@@ -425,11 +521,11 @@
   };
   $("wb-prev").onclick = () => { stopPlay(); step(-1); };
   $("wb-next").onclick = () => { stopPlay(); step(1); };
-  $("wb-hour").oninput = () => { stopPlay(); showWind(); };
-  $("wb-close").onclick = () => { $("wind").value = "off"; save(); showWind(); };
+  $("wb-hour").oninput = () => { stopPlay(); showRdps(); };
+  $("wb-close").onclick = () => { $("wind").value = "off"; $("precip").value = "off"; save(); showRdps(); };
   $("wind").value = ["particles", "arrows"].includes(prefs.wind) ? prefs.wind : "off";
-  $("wind").onchange = () => { save(); showWind(); if (phone.matches) closeSettings(); };
-  setInterval(loadWindMeta, 10 * 60e3);
+  $("precip").value = prefs.precip === "on" ? "on" : "off";
+  $("wind").onchange = $("precip").onchange = () => { save(); showRdps(); if (phone.matches) closeSettings(); };
 
   // ---- phones: ⚙ opens Date, Layer and All of Canada; the legend collapses on tap ------------------
   const phone = window.matchMedia("(max-width: 700px)");
@@ -456,7 +552,7 @@
   showLayer();
   updatePdfLink();
   loadAlerts();
-  loadWindMeta();
+  loadRdpsMeta();
   loadGoes();
   if (linked) { openPanel(); showArea(true); }
 })();

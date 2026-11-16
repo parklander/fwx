@@ -191,3 +191,8 @@ body.sheet-open #legend { bottom: calc(var(--sheet-h, 0px) + 24px); }
 #legend-date { max-width: 260px; }
 #date:disabled { opacity: 0.5; }
 #legend img[hidden] { display: none; }
+#wb-pk { margin: 2px 0 3px; }
+#wb-pk[hidden] { display: none; }
+#wb-pkey { display: block; width: 100%; height: 9px; border-radius: 2px; }
+#wb-pticks { position: relative; height: 13px; font-size: 10.5px; color: #5b6670; }
+#wb-pticks span { position: absolute; transform: translateX(-50%); top: 1px; white-space: nowrap; }

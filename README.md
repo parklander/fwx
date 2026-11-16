@@ -1,6 +1,6 @@
 # CWFIS Fire Weather Forecast
 
-A small web page with three pickers (area, date, layer) over a map of the CWFIS daily fire weather grids, plus a forecast PDF for the selected area. Fire weather comes from the Canadian Wildland Fire Information System (NRCan), the point forecast from ECCC's GEM models via Open-Meteo, and alerts from Environment and Climate Change Canada. The only model download is the RDPS 10 m wind for the map overlay.
+A small web page with three pickers (area, date, layer) over a map of the CWFIS daily fire weather grids, plus a forecast PDF for the selected area. Fire weather comes from the Canadian Wildland Fire Information System (NRCan), the point forecast from ECCC's GEM models via Open-Meteo, and alerts from Environment and Climate Change Canada. The only model downloads are the RDPS wind and precipitation for the map overlays.
 
 - **Map:** the CWFIS layer (FWI, ISI, FFMC, BUI, DMC, DC, fire danger, head fire intensity) for the chosen date, straight from CWFIS's WMS, with its legend. The area's reference point and bounding box are drawn on top.
 - **Forecast PDF:** for the chosen area, from the day before the selected date to the end of the CWFIS forecast (up to 12 days). It includes:
@@ -22,15 +22,24 @@ The hourly FFMC, ISI and FWI in the first two tabs are calculated by this app ([
 
 The **Layer** list has a *Satellite (GOES)* group with **Natural colour**: the latest GOES 1 km image from ECCC GeoMet (WMS), new every 10 minutes. In it land is green-brown, water clouds are white, ice clouds and snow are cyan, and smoke is a grey-tan haze. The image is blank at night. The map uses GOES-West when it's centred west of 105° W, where that satellite sees at a much better angle, and GOES-East elsewhere. The date picker is greyed out while it's showing, and wind streaks turn white over it. The server only looks up each layer's latest image time ([goes.py](goes.py), cached 5 minutes); the browser fetches the images from GeoMet directly.
 
-## Wind overlay
+## Wind and precipitation (RDPS)
 
-**Wind** (Off, Particles, Arrows) draws ECCC's RDPS 10 m wind over the map: animated streaks that flow with the wind (faster is darker and heavier, red above about 55 km/h), or arrows pointing downwind. A bar at the top of the map steps through the hours from now to 48 hours ahead (−1h / +1h, or ▶ to play them), and hovering or tapping the map shows the speed and direction there.
+**Wind** (Off, Particles, Arrows) draws ECCC's RDPS 10 m wind over the map: animated streaks that flow with the wind (faster is darker and heavier, red above about 55 km/h; white over the satellite image), or arrows pointing downwind.
 
-The server ([wind.py](wind.py)) checks the MSC Datamart every 10 minutes for a newer RDPS run. Once a run's files reach 48 hours past now, it downloads the `WindSpeed_AGL-10m` and `WindDir_AGL-10m` GRIB2 for each hour (about 100 files), regrids them from the rotated lat-lon grid onto a Web Mercator raster over Canada, and keeps them as small byte frames in `data/wind/`. Only the newest complete run is kept, and the previous one is served until the next has fully arrived. The browser fetches one hour at a time (two frames).
+**Precip** (Off, Rate by type) colours the RDPS precipitation that falls in the hour ending at the time shown, with the same types, colours and labels as the fire-modeling viewer: one intensity ramp each for rain, rain/snow mix, freezing rain, ice pellets and snow, from 0.05 mm/h (faint) upward, and nothing where it's dry. The key under the hour bar runs 0.1 → 10 mm/h for each type.
+
+Both use a bar at the top of the map that steps through the hours from now to 48 hours ahead (−1h / +1h, or ▶ to play them). Hovering or tapping the map shows the values there, e.g. "Snow 0.8 mm/h · 24 km/h from NW (315°)".
+
+The server ([rdps.py](rdps.py)) checks the MSC Datamart every 10 minutes for a newer RDPS run. Once a run's files reach 48 hours past now, it downloads for each hour `WindSpeed_AGL-10m`, `WindDir_AGL-10m`, `Precip-Accum_Sfc`, `PrecipType-Instant_Sfc` and `AirTemp_AGL-2m` (about 260 GRIB2 files), regrids them from the rotated lat-lon grid onto a Web Mercator raster over Canada, and keeps one-byte frames in `data/rdps/`:
+
+- wind speed (km/h) and direction (2° steps);
+- precipitation: rate = this hour's accumulation minus the last hour's, and type = the RDPS instantaneous type, or, where it stopped by the end of the hour, the 2 m temperature (≤ 0 °C snow, < 2 °C mix, else rain), as in fire-modeling's `precip.py`. Rate and type share one byte: 50 rate steps per type on a log scale from 0.05 to 50 mm/h.
+
+Only the newest complete run is kept, and the previous one is served until the next has fully arrived. The browser fetches one hour at a time (up to three small frames). Until the first run is in, the page re-checks every 30 seconds.
 
 RDPS has no 2 m wind. 10 m is the height the FWI System, the FBP System and CWFIS use.
 
-`FW_WIND=0` turns the download off. `FW_WIND_HOURS` (default 48) sets how far ahead it goes.
+`FW_RDPS=0` turns the downloads off. `FW_WIND_HOURS` (default 48) sets how far ahead they go.
 
 ## Alerts and notifications
 
@@ -65,7 +74,7 @@ Open http://127.0.0.1:8000. On Windows use `.venv\Scripts\...`.
 
 ## Deploy on DigitalOcean
 
-The smallest droplet is plenty: the server queries CWFIS, keeps a short in-memory cache, and stores about 20 MB of wind frames. Push this folder to a GitHub repo, point a domain's DNS at the droplet (optional), then:
+The smallest droplet is plenty: the server queries CWFIS, keeps a short in-memory cache, and stores about 40 MB of RDPS frames. Push this folder to a GitHub repo, point a domain's DNS at the droplet (optional), then:
 
 ```
 ssh root@<droplet-ip>

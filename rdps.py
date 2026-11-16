@@ -1,17 +1,26 @@
-"""RDPS 10 m wind for the next 48 hours: GRIB2 from the MSC Datamart, regridded for the map's wind overlay.
+"""RDPS map overlays for the next 48 hours: 10 m wind and hourly precipitation rate by type.
 
-A background thread looks for the newest RDPS run every few minutes. Once a run's files reach the last hour
-we want, it downloads the 10 m wind speed and direction GRIB2 for each hour from about now to now + 48 h,
-regrids them onto a Web Mercator raster over Canada and keeps them as small gzipped byte frames:
+GRIB2 from the MSC Datamart, regridded for the map. A background thread looks for the newest RDPS run every
+few minutes. Once a run's files reach the last hour we want, it downloads, for each hour from about now to
+now + 48 h, the 10 m wind speed and direction, the accumulated precipitation, the instantaneous precipitation
+type and the 2 m temperature, regrids them onto a Web Mercator raster over Canada and keeps small gzipped byte
+frames:
 
-    data/wind/<run>/<var>/<hhh>.u8.gz     (run = YYYYMMDDHH UTC, hhh = forecast hour)
+    data/rdps/<run>/<var>/<hhh>.u8.gz     (run = YYYYMMDDHH UTC, hhh = forecast hour; var wspd, wdir, precip)
 
-The browser draws particles or arrows from these frames (static/windlayer.js). Only the newest complete run is
-kept; the previous one is served until the next has fully arrived.
+The browser draws wind particles or arrows (static/windlayer.js) and colours the precipitation. Only the newest
+complete run is kept; the previous one is served until the next has fully arrived.
 
 RDPS has no 2 m wind; 10 m is the standard height for fire weather (FWI System, FBP) and the CWFIS wind.
 Speed and direction come as their own fields (earth-relative, direction the wind blows from), so the rotated
 grid's U/V components never need rotating.
+
+Precipitation follows the fire-modeling viewer (fireweather/precip.py):
+- rate, mm/h: accumulated precipitation at hour T minus hour T-1, i.e. what fell in the hour ending at T;
+- type: 1 rain, 2 rain/snow mix, 3 freezing rain, 4 ice pellets, 5 snow, from the RDPS instantaneous type
+  (ECCC codes 1-5, 6 = none). Where the hour had precipitation but the type at the end of the hour is "none"
+  (it stopped), the 2 m temperature decides: <= 0 °C snow, < 2 °C mix, else rain. Under PRATE_MIN is dry.
+Both go in one byte per cell (see encode_precip).
 """
 import gzip
 import json
@@ -28,7 +37,7 @@ from pathlib import Path
 import numpy as np
 import requests
 
-log = logging.getLogger("wind")
+log = logging.getLogger("rdps")
 
 DATAMART = "https://dd.weather.gc.ca"
 RUN_HOURS = (0, 6, 12, 18)
@@ -37,16 +46,25 @@ AHEAD_H = int(os.environ.get("FW_WIND_HOURS", "48"))  # how far past "now" to co
 BEHIND_H = 2                                  # also keep a couple of hours before now
 POLL_MIN = 10
 WORKERS = 4
-TOKENS = {"wspd": "WindSpeed_AGL-10m", "wdir": "WindDir_AGL-10m"}
+TOKENS = {"wspd": "WindSpeed_AGL-10m", "wdir": "WindDir_AGL-10m",          # -> frames as they are
+          "accum": "Precip-Accum_Sfc", "ptype": "PrecipType-Instant_Sfc",  # -> the precip frame
+          "temp": "AirTemp_AGL-2m"}
+FRAME_VARS = ("wspd", "wdir")
+RAW_VARS = ("accum", "ptype", "temp")     # kept as float arrays until the precip frame is derived
+PRATE_MIN = 0.05                          # mm/h: less than this in the hour counts as no precipitation
+PTYPE_NAMES = {1: "Rain", 2: "Rain/snow mix", 3: "Freezing rain", 4: "Ice pellets", 5: "Snow"}
+# precip byte: 0 no data, 1 dry, else 2 + (type - 1) * LEVELS + level, level on a log scale from PRATE_MIN to PRATE_TOP
+LEVELS, PRATE_TOP = 50, 50.0
 
 # Display raster: Web Mercator over southern and central Canada (all the areas, with room to pan)
 BOUNDS = {"west": -142.0, "east": -50.0, "south": 40.0, "north": 72.0}
 WIDTH = 1000  # ~0.09° per pixel, about the RDPS cell size
-# Frames are uint8: 0 = no data, else round((v - offset) * scale) + 1
+# Wind frames are uint8: 0 = no data, else round((v - offset) * scale) + 1. The precip frame is described in meta().
 VARIABLES = {
     "wspd": {"label": "Wind speed (10 m)", "units": "km/h", "offset": 0.0, "scale": 1.0},
     "wdir": {"label": "Wind direction (10 m)", "units": "°", "offset": 0.0, "scale": 0.5},
 }
+SERVED = ("wspd", "wdir", "precip")
 
 _session = requests.Session()
 
@@ -133,8 +151,44 @@ def grid_map(h):
         return idx
 
 
+def grib_to_raster(content):
+    """GRIB2 bytes -> float array on the display raster (flat, NaN outside the domain or missing)."""
+    import eccodes
+    h = eccodes.codes_new_from_message(content)
+    try:
+        idx = grid_map(h)
+        vals = eccodes.codes_get_values(h).astype(np.float64)
+        if eccodes.codes_get(h, "bitmapPresent"):
+            vals[vals == eccodes.codes_get(h, "missingValue")] = np.nan
+    finally:
+        eccodes.codes_release(h)
+    return np.where(idx >= 0, vals[np.maximum(idx, 0)], np.nan).astype(np.float32)
+
+
+def precip_rate_type(acc1, acc0, raw, temp_k):
+    """(rate mm/h, type 0-5) from accumulations at T and T-1 (kg/m² = mm), the type code at T and 2 m temperature."""
+    rate = np.clip(acc1 - acc0, 0, None)  # accumulations never decrease; clip packing noise
+    code = np.rint(np.nan_to_num(raw, nan=6))
+    typ = np.where((code >= 1) & (code <= 5), code, 0)
+    wet = rate >= PRATE_MIN
+    t = temp_k - 273.15
+    fallback = np.where(t <= 0, 5, np.where(t < 2, 2, 1))  # stopped by the end of the hour: by temperature
+    typ = np.where(wet, np.where(typ == 0, fallback, typ), 0)
+    return rate, typ
+
+
+def encode_precip(rate, typ):
+    """One byte per cell: 0 no data, 1 dry, else 2 + (type-1)*LEVELS + level (log scale PRATE_MIN..PRATE_TOP)."""
+    with np.errstate(divide="ignore", invalid="ignore"):
+        level = np.rint(np.log(np.maximum(rate, PRATE_MIN) / PRATE_MIN) / math.log(PRATE_TOP / PRATE_MIN) * (LEVELS - 1))
+    level = np.clip(np.nan_to_num(level), 0, LEVELS - 1)
+    q = np.where(typ > 0, 2 + (typ - 1) * LEVELS + level, 1)
+    q[np.isnan(rate)] = 0
+    return gzip.compress(q.astype(np.uint8).tobytes(), 6)
+
+
 def grib_to_frame(content, var):
-    """GRIB2 bytes -> gzipped uint8 display frame."""
+    """GRIB2 bytes -> gzipped uint8 display frame (wspd, wdir)."""
     import eccodes
     h = eccodes.codes_new_from_message(content)
     try:
@@ -193,19 +247,20 @@ def _exists(u):
         return False
 
 
-class Wind:
+class Rdps:
     def __init__(self, data_dir):
-        self.dir = Path(data_dir) / "wind"
+        self.dir = Path(data_dir) / "rdps"
         self.dir.mkdir(parents=True, exist_ok=True)
+        shutil.rmtree(Path(data_dir) / "wind", ignore_errors=True)  # the wind-only layout before precip
         self._lock = threading.Lock()
         self.status = "starting"
-        self.run, self.hours = None, []
+        self.run, self.hours, self.precip_hours = None, [], []
         for d in sorted(self.dir.iterdir(), reverse=True):  # newest complete run already on disk
             m = d / "manifest.json"
             if d.is_dir() and m.exists():
                 try:
                     doc = json.loads(m.read_text())
-                    self.run, self.hours = doc["run"], doc["hours"]
+                    self.run, self.hours, self.precip_hours = doc["run"], doc["hours"], doc["precip_hours"]
                     self.status = "ok"
                     break
                 except (ValueError, KeyError):
@@ -218,12 +273,14 @@ class Wind:
     def meta(self):
         h, w = raster_shape()
         with self._lock:
-            run, hours, status = self.run, list(self.hours), self.status
+            run, hours, phours, status = self.run, list(self.hours), set(self.precip_hours), self.status
         out = {"run": run, "status": status, "bounds": BOUNDS, "width": w, "height": h, "variables": VARIABLES,
-               "source": "ECCC RDPS 10 km, 10 m wind", "hours": []}
+               "precip": {"levels": LEVELS, "min": PRATE_MIN, "top": PRATE_TOP, "types": PTYPE_NAMES},
+               "source": "ECCC RDPS 10 km", "hours": []}
         if run:
             t0 = run_time(run)
-            out["hours"] = [{"fh": fh, "valid": (t0 + timedelta(hours=fh)).strftime("%Y-%m-%dT%H:%MZ")} for fh in hours]
+            out["hours"] = [{"fh": fh, "valid": (t0 + timedelta(hours=fh)).strftime("%Y-%m-%dT%H:%MZ"),
+                             "precip": fh in phours} for fh in hours]
         return out
 
     def loop(self, stop):
@@ -231,7 +288,7 @@ class Wind:
             try:
                 self.update()
             except Exception:
-                log.exception("wind update failed")
+                log.exception("RDPS update failed")
                 with self._lock:
                     self.status = "error" if not self.run else self.status
             stop.wait(POLL_MIN * 60)
@@ -243,15 +300,15 @@ class Wind:
             if self.run and run <= self.run:
                 return  # nothing newer is complete yet
             hours = hours_for(run, now)
-            if _exists(url(run, "wspd", hours[-1])) and _exists(url(run, "wdir", hours[-1])):
+            if all(_exists(url(run, v, hours[-1])) for v in TOKENS):
                 break
         else:
             log.info("no recent RDPS run is complete on the Datamart yet")
             return
-        log.info("downloading RDPS %sZ 10 m wind, hours %d–%d", run, hours[0], hours[-1])
+        log.info("downloading RDPS %sZ wind and precipitation, hours %d–%d", run, hours[0], hours[-1])
         part = self.dir / f"{run}.part"
         shutil.rmtree(part, ignore_errors=True)
-        for v in TOKENS:
+        for v in FRAME_VARS + ("precip", "_raw"):
             (part / v).mkdir(parents=True)
 
         def one(job):
@@ -262,7 +319,10 @@ class Wind:
                     if r.status_code == 404:
                         return False
                     r.raise_for_status()
-                    (part / var / f"{fh:03d}.u8.gz").write_bytes(grib_to_frame(r.content, var))
+                    if var in FRAME_VARS:
+                        (part / var / f"{fh:03d}.u8.gz").write_bytes(grib_to_frame(r.content, var))
+                    else:
+                        np.save(part / "_raw" / f"{var}_{fh:03d}.npy", grib_to_raster(r.content))
                     return True
                 except requests.RequestException as e:
                     log.warning("%s %s %03d: %s", run, var, fh, e)
@@ -270,21 +330,33 @@ class Wind:
             return False
 
         t = time.time()
-        jobs = [(v, fh) for fh in hours for v in TOKENS]
-        with ThreadPoolExecutor(WORKERS, thread_name_prefix="wind") as pool:
+        # the rate for hour T needs the accumulation at T-1 too (hour 0's accumulation is zero by definition)
+        jobs = ([(v, fh) for fh in hours for v in FRAME_VARS + RAW_VARS]
+                + ([("accum", hours[0] - 1)] if hours[0] > 0 else []))
+        with ThreadPoolExecutor(WORKERS, thread_name_prefix="rdps") as pool:
             ok = dict(zip(jobs, pool.map(one, jobs)))
-        got = [fh for fh in hours if all(ok[(v, fh)] for v in TOKENS)]
-        if len(got) < len(hours) * 0.9:
-            log.warning("RDPS %s: only %d of %d hours arrived; keeping the previous run", run, len(got), len(hours))
+        got = [fh for fh in hours if all(ok[(v, fh)] for v in FRAME_VARS)]
+        raw = lambda v, fh: np.load(part / "_raw" / f"{v}_{fh:03d}.npy")
+        precip = []
+        for fh in hours:
+            if fh == 0 or not all(ok.get((v, fh)) for v in RAW_VARS) or not ok.get(("accum", fh - 1)):
+                continue
+            rate, typ = precip_rate_type(raw("accum", fh), raw("accum", fh - 1), raw("ptype", fh), raw("temp", fh))
+            (part / "precip" / f"{fh:03d}.u8.gz").write_bytes(encode_precip(rate, typ))
+            precip.append(fh)
+        shutil.rmtree(part / "_raw", ignore_errors=True)
+        if len(got) < len(hours) * 0.9 or len(precip) < (len(hours) - 1) * 0.9:
+            log.warning("RDPS %s: only %d wind and %d precipitation hours of %d arrived; keeping the previous run",
+                        run, len(got), len(precip), len(hours))
             shutil.rmtree(part, ignore_errors=True)
             return
-        (part / "manifest.json").write_text(json.dumps({"run": run, "hours": got}))
+        (part / "manifest.json").write_text(json.dumps({"run": run, "hours": got, "precip_hours": precip}))
         final = self.dir / run
         shutil.rmtree(final, ignore_errors=True)
         part.rename(final)
         with self._lock:
-            self.run, self.hours, self.status = run, got, "ok"
-        log.info("RDPS %sZ wind ready: %d hours in %.0f s", run, len(got), time.time() - t)
+            self.run, self.hours, self.precip_hours, self.status = run, got, precip, "ok"
+        log.info("RDPS %sZ ready: %d wind and %d precipitation hours in %.0f s", run, len(got), len(precip), time.time() - t)
         self._prune()
 
     def _prune(self):

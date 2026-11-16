@@ -22,8 +22,10 @@
     <label>Layer <select id="layer"></select></label>
     <label title="RDPS 10 m wind for the next 48 hours">Wind <select id="wind">
       <option value="off">Off</option><option value="particles">Particles</option><option value="arrows">Arrows</option></select></label>
+    <label title="RDPS hourly precipitation rate, coloured by type, for the next 48 hours">Precip <select id="precip">
+      <option value="off">Off</option><option value="on">Rate by type</option></select></label>
     <button type="button" id="bell" class="btn2 bell" title="Get a notification when ECCC issues a new alert">🔔<span class="long"> Notify me</span></button>
-    <div class="about">Daily grids from the <a href="https://cwfis.cfs.nrcan.gc.ca/" target="_blank" rel="noopener">Canadian Wildland Fire Information System</a> (NRCan), noon local standard time. Alerts, RDPS wind and GOES satellite images from Environment and Climate Change Canada. The PDF covers the day before the selected date through the end of the CWFIS forecast.</div>
+    <div class="about">Daily grids from the <a href="https://cwfis.cfs.nrcan.gc.ca/" target="_blank" rel="noopener">Canadian Wildland Fire Information System</a> (NRCan), noon local standard time. Alerts, RDPS wind and precipitation and GOES satellite images from Environment and Climate Change Canada. The PDF covers the day before the selected date through the end of the CWFIS forecast.</div>
   </div>
   <a id="pdf" class="btn" target="_blank" rel="noopener"><span class="long">Forecast </span>PDF ↗</a>
   <span id="status" role="status"></span>
@@ -40,10 +42,12 @@
       <button type="button" id="wb-play" aria-label="Play">▶︎</button>
       <button type="button" id="wb-next" aria-label="Next hour">+1h</button>
       <b id="wb-time"></b>
-      <button type="button" class="x" id="wb-close" aria-label="Turn wind off" title="Turn wind off">×</button>
+      <button type="button" class="x" id="wb-close" aria-label="Turn wind and precipitation off" title="Turn wind and precipitation off">×</button>
     </div>
     <input type="range" id="wb-hour" min="0" max="0" value="0" aria-label="Forecast hour">
-    <div class="sub"><span id="wb-read">10 m wind · hover or tap the map for a value</span><span id="wb-src"></span></div>
+    <div id="wb-pk" hidden title="Precipitation in the hour ending at the time shown, by type; each segment runs 0.1 → 10 mm/h">
+      <canvas id="wb-pkey" width="300" height="9"></canvas><div id="wb-pticks"></div></div>
+    <div class="sub"><span id="wb-read">Hover or tap the map for values</span><span id="wb-src"></span></div>
   </div>
   <section id="sheet" hidden aria-label="Area forecast">
     <div class="sh-head" id="sh-head" title="Tap to shrink or expand">
@@ -66,7 +70,7 @@
     <div class="sub" id="legend-date"></div>
   </aside>
 </main>
-<footer>Daily grids from the <a href="https://cwfis.cfs.nrcan.gc.ca/" target="_blank" rel="noopener">Canadian Wildland Fire Information System</a> (NRCan), noon local standard time. Alerts, RDPS wind and GOES satellite images from Environment and Climate Change Canada. The PDF covers the day before the selected date through the end of the CWFIS forecast.</footer>
+<footer>Daily grids from the <a href="https://cwfis.cfs.nrcan.gc.ca/" target="_blank" rel="noopener">Canadian Wildland Fire Information System</a> (NRCan), noon local standard time. Alerts, RDPS wind and precipitation and GOES satellite images from Environment and Climate Change Canada. The PDF covers the day before the selected date through the end of the CWFIS forecast.</footer>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <script src="/static/windlayer.js"></script>

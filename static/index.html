@@ -31,6 +31,19 @@
 </header>
 <main>
   <div id="map"></div>
+  <section id="sheet" hidden aria-label="Area forecast">
+    <div class="sh-head" id="sh-head" title="Tap to shrink or expand">
+      <span class="grab"></span>
+      <b id="sh-title"></b><span id="sh-sub" class="sub"></span>
+      <button type="button" class="x" id="sh-close" aria-label="Close">×</button>
+    </div>
+    <nav class="tabs" role="tablist">
+      <button type="button" data-tab="fc">Forecast</button>
+      <button type="button" data-tab="fw">Fire weather</button>
+      <button type="button" data-tab="fwi">FWI 3 days</button>
+    </nav>
+    <div id="sh-body"></div>
+  </section>
   <aside id="alerts" class="panel" hidden></aside>
   <aside id="notify" class="panel" hidden></aside>
   <aside id="legend" hidden title="Tap to show or hide the legend">
@@ -41,6 +54,8 @@
 </main>
 <footer>Daily grids from the <a href="https://cwfis.cfs.nrcan.gc.ca/" target="_blank" rel="noopener">Canadian Wildland Fire Information System</a> (NRCan), noon local standard time. Alerts from Environment and Climate Change Canada. The PDF covers the day before the selected date through the end of the CWFIS forecast.</footer>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="/static/panel.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>

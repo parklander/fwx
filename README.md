@@ -1,12 +1,22 @@
 # CWFIS Fire Weather Forecast
 
-A small web page with three pickers (area, date, layer) over a map of the CWFIS daily fire weather grids, plus a forecast PDF for the selected area. Fire weather comes from the Canadian Wildland Fire Information System (NRCan) and alerts from Environment and Climate Change Canada: no model downloads.
+A small web page with three pickers (area, date, layer) over a map of the CWFIS daily fire weather grids, plus a forecast PDF for the selected area. Fire weather comes from the Canadian Wildland Fire Information System (NRCan), the point forecast from ECCC's GEM models via Open-Meteo, and alerts from Environment and Climate Change Canada: no model downloads.
 
 - **Map:** the CWFIS layer (FWI, ISI, FFMC, BUI, DMC, DC, fire danger, head fire intensity) for the chosen date, straight from CWFIS's WMS, with its legend. The area's reference point and bounding box are drawn on top.
 - **Forecast PDF:** for the chosen area, from the day before the selected date to the end of the CWFIS forecast (up to 12 days). It includes:
   - noon temperature, RH, wind and rain, the FWI System codes and indices, and the CWFIS fire danger, at the area's reference point;
   - the highest FWI and danger of any cell in the area's bounding box;
   - an FWI chart coloured by danger, and the source notes.
+
+## Area panel
+
+Picking an area (from the list, or by tapping it on the map) opens a panel at the bottom of the screen, beside the map on wider screens, with three tabs:
+
+- **Forecast:** the next 24 hours hour by hour, and a 7-day outlook (high/low, rain, wind and gusts, lowest RH, peak FWI) from ECCC's GEM models via [Open-Meteo](https://open-meteo.com/) (`gem_seamless`: HRDPS, then RDPS, then GDPS).
+- **Fire weather:** hourly meteograms for temperature, RH, wind and gusts, rain, FFMC and FWI over 48 hours, 3 days or 7 days. Touch or hover any chart to read every value at that hour.
+- **FWI 3 days:** CWFIS's daily values for today, tomorrow and the day after: danger class, FWI, the area's worst cell, ISI, BUI, FFMC, DMC, DC and noon weather.
+
+The hourly FFMC, ISI and FWI in the first two tabs are calculated by this app ([wxpoint.py](wxpoint.py)), not by CWFIS. They start from CWFIS's daily FFMC at noon yesterday and step through the Open-Meteo hourly weather with the hourly FFMC equations (Van Wagner 1977, as in the cffdrs package's `hffmc`), using CWFIS's daily BUI. They show the shape of the day: overnight recovery, the afternoon peak, the effect of rain.
 
 ## Alerts and notifications
 

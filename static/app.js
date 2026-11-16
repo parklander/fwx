@@ -79,10 +79,15 @@
     }
     declutter();
     if (fly) {
-      if (a.bbox) map.fitBounds(L.latLngBounds([[a.bbox[1], a.bbox[0]], [a.bbox[3], a.bbox[2]]]).pad(1.5), { maxZoom: 10 });
-      else map.setView([a.lat, a.lon], 9);
+      // keep the area clear of the forecast panel at the bottom
+      const pad = window.fwxSheet?.padding() || { left: 0, bottom: 0 };
+      const box = a.bbox ? L.latLngBounds([[a.bbox[1], a.bbox[0]], [a.bbox[3], a.bbox[2]]])
+                         : L.latLng(a.lat, a.lon).toBounds(20000);
+      map.fitBounds(box.pad(a.bbox ? 1.5 : 0), { maxZoom: 10, paddingTopLeft: [pad.left + 10, 10], paddingBottomRight: [10, pad.bottom + 10] });
     }
   }
+  // tell the forecast panel which area was picked
+  const openPanel = () => document.dispatchEvent(new CustomEvent("area-selected", { detail: { id: $("aoi").value, name: byId[$("aoi").value].name } }));
 
   // ---- layers and dates ------------------------------------------------------------------------
   let info;
@@ -134,7 +139,7 @@
     $("pdf").href = `/api/forecast.pdf?aoi=${encodeURIComponent($("aoi").value)}&start=${start}`;
   }
 
-  $("aoi").onchange = () => { save(); showArea(true); updatePdfLink(); };
+  $("aoi").onchange = () => { save(); openPanel(); showArea(true); updatePdfLink(); };
   $("country").onclick = showCountry;
   $("layer").onchange = () => { save(); showLayer(); };
   $("date").onchange = () => { showLayer(); updatePdfLink(); };
@@ -304,5 +309,5 @@
   showLayer();
   updatePdfLink();
   loadAlerts();
-  if (linked) showArea(true);
+  if (linked) { openPanel(); showArea(true); }
 })();

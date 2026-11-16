@@ -21,6 +21,7 @@ import alerts
 import cwfis
 import push
 import report_pdf
+import wxpoint
 
 ROOT = Path(__file__).resolve().parent
 AOI_FILE = ROOT / "aois.json"
@@ -108,6 +109,32 @@ async def forecast_pdf(aoi: str, start: str | None = Query(None, pattern=r"^\d{4
     name = re.sub(r"[^A-Za-z0-9]+", "-", area["name"]).strip("-")
     return Response(pdf, media_type="application/pdf",
                     headers={"Content-Disposition": f'inline; filename="fire-weather-{name}-{first.isoformat()}.pdf"'})
+
+
+# ---- the area panel: point forecast, hourly fire weather, next three days' CWFIS FWI ------------------
+
+def _area_panel(area):
+    t = today()
+    out = {"area": area, "today": t.isoformat(), "fwi_days": [], "weather": None, "errors": {}}
+    rows = []
+    try:
+        first, last = _period((t - timedelta(days=1)).isoformat())
+        rows = cwfis.area_daily(area, first, last)  # same days and cache as the default PDF
+        out["fwi_days"] = [r for r in rows if t.isoformat() <= r["date"] <= (t + timedelta(days=2)).isoformat()]
+    except Exception as e:
+        log.warning("CWFIS for %s: %s", area["id"], e)
+        out["errors"]["cwfis"] = "CWFIS isn't answering right now"
+    try:
+        out["weather"] = wxpoint.area_weather(area, rows)
+    except Exception as e:
+        log.warning("Open-Meteo for %s: %s", area["id"], e)
+        out["errors"]["weather"] = "The weather forecast isn't available right now"
+    return out
+
+
+@app.get("/api/area/{aoi}")
+async def area_panel(aoi: str):
+    return await run_in_threadpool(_area_panel, find_area(aoi))
 
 
 # ---- ECCC alerts and push notifications ----------------------------------------------------------

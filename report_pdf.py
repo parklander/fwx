@@ -36,7 +36,7 @@ def _wind(row):
     return (f"{COMPASS[int((d + 11.25) // 22.5) % 16]} " if d is not None else "") + f"{row['ws']:.0f}"
 
 
-ALERT_COLOURS = {"warning": "#c62828", "watch": "#e07b00", "statement": "#5b6670"}
+ALERT_COLOURS = {"warning": "#c62828", "watch": "#e07b00", "statement": "#7b1fa2"}
 
 
 def build(area, rows, today=None, issued=None, alerts_in_effect=()):

@@ -25,9 +25,9 @@ footer { padding: 6px 14px; font-size: 12px; color: #5b6670; background: #f3f5f7
 .chip { font: inherit; font-size: 13px; background: transparent; color: #c9d1d8; border: 1px solid #5b6670; border-radius: 14px; padding: 3px 11px; cursor: pointer; }
 .chip:hover { background: #2f3840; }
 .chip.on { color: #fff; font-weight: 600; }
-.lvl-warning { --lvl: #e53935; } .lvl-watch { --lvl: #f08a00; } .lvl-statement { --lvl: #8a959f; }
+.lvl-warning { --lvl: #e53935; } .lvl-watch { --lvl: #f08a00; } .lvl-statement { --lvl: #7b1fa2; }
 .chip.on { border-color: var(--lvl); background: color-mix(in srgb, var(--lvl) 35%, transparent); }
-.panel { position: absolute; top: 12px; right: 12px; z-index: 600; width: min(380px, calc(100% - 24px)); max-height: calc(100% - 24px);
+.panel { position: absolute; top: 12px; right: 12px; z-index: 1150; width: min(380px, calc(100% - 24px)); max-height: calc(100% - 24px);
          overflow: auto; background: #fff; border-radius: 8px; box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3); padding: 12px 14px; }
 .panel h2 { font-size: 15px; margin: 0 0 8px; display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
 .panel .x { background: none; border: none; font-size: 18px; cursor: pointer; color: #5b6670; }
@@ -71,7 +71,7 @@ header { gap: 8px 12px; }
   #controls { display: none; }
   body.settings-open #controls {
     display: flex; flex-direction: column; align-items: stretch; gap: 10px;
-    position: fixed; left: 8px; right: 8px; top: var(--hdr, 96px); z-index: 1000;
+    position: fixed; left: 8px; right: 8px; top: var(--hdr, 96px); z-index: 1200;
     background: #fff; color: #1d2329; border-radius: 8px; padding: 12px 14px; box-shadow: 0 2px 14px rgba(0, 0, 0, 0.35);
   }
   body.settings-open #controls label { justify-content: space-between; }
@@ -95,4 +95,78 @@ header { gap: 8px 12px; }
 @media (max-width: 700px) {
   body.settings-open #controls .long { display: inline !important; }
   body.settings-open #controls .bell { text-align: left; padding: 8px 12px; }
+}
+
+/* ---- area panel (bottom sheet) ---- */
+#sheet { position: absolute; z-index: 1100; left: 12px; bottom: 12px; width: min(560px, calc(100% - 24px)); height: min(62vh, calc(100% - 24px));
+         display: flex; flex-direction: column; background: #fff; border-radius: 10px; box-shadow: 0 2px 16px rgba(0, 0, 0, 0.32); overflow: hidden; }
+#sheet[hidden] { display: none; }
+.sh-head { display: flex; align-items: baseline; gap: 8px; padding: 10px 12px 4px; cursor: pointer; position: relative; }
+.sh-head b { font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sh-head .sub { flex: 1; white-space: nowrap; }
+.sh-head .x { background: none; border: none; font-size: 20px; line-height: 1; cursor: pointer; color: #5b6670; padding: 0 2px; }
+.grab { display: none; }
+.tabs { display: flex; gap: 4px; padding: 4px 10px 0; border-bottom: 1px solid #e3e6e9; }
+.tabs button { font: inherit; font-size: 13.5px; background: none; border: none; border-bottom: 3px solid transparent; padding: 6px 8px; cursor: pointer; color: #5b6670; }
+.tabs button.on { color: #1d2329; font-weight: 650; border-bottom-color: #e8590c; }
+#sh-body { overflow: auto; padding: 8px 12px 12px; -webkit-overflow-scrolling: touch; }
+#sheet.min #sh-body { display: none; }
+#sheet.min { height: auto; }
+.pad { padding: 8px 0; }
+.note { font-size: 11.5px; color: #5b6670; margin: 10px 0 0; line-height: 1.45; }
+.warr { display: inline-block; font-weight: 700; color: #1d2329; line-height: 1; }
+/* forecast */
+.hours { display: flex; overflow-x: auto; gap: 2px; padding-bottom: 6px; margin: 0 -4px; scroll-snap-type: x proximity; }
+.hours .hr { flex: 0 0 48px; text-align: center; padding: 4px 2px; border-radius: 6px; background: #f6f7f8; scroll-snap-align: start; }
+.hours .hr.midnight { box-shadow: inset 2px 0 0 #c3c8cd; }
+.hours .t { font-size: 11px; color: #5b6670; font-weight: 600; }
+.hours .ic { font-size: 18px; line-height: 1.3; }
+.hours .v { font-weight: 700; }
+.hours .s { font-size: 11px; color: #3c444c; min-height: 14px; }
+.hours .rain { color: #2a78d6; font-weight: 600; }
+table.days { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 13px; }
+table.days th { font-size: 10.5px; color: #5b6670; font-weight: 600; text-align: left; padding: 3px 4px; border-bottom: 1px solid #e3e6e9; }
+table.days td { padding: 5px 4px; border-bottom: 1px solid #f0f2f4; vertical-align: middle; white-space: nowrap; }
+table.days td.ic { font-size: 18px; }
+table.days tr.today td { background: #fff4ec; }
+table.days .s { font-size: 11px; color: #5b6670; }
+/* fire weather */
+.rng { display: flex; gap: 4px; margin-bottom: 6px; }
+.rng button { font: inherit; font-size: 12px; padding: 3px 10px; border-radius: 12px; border: 1px solid #c3c8cd; background: #fff; cursor: pointer; }
+.rng button.on { background: #1d2329; color: #fff; border-color: #1d2329; }
+.readout { position: sticky; top: -8px; z-index: 2; background: #fff; display: flex; flex-wrap: wrap; gap: 2px 10px; font-size: 12.5px;
+           padding: 6px 0; border-bottom: 1px solid #e3e6e9; min-height: 40px; }
+.cbox { margin-top: 6px; }
+.ct { font-size: 11.5px; font-weight: 600; color: #3c444c; display: flex; gap: 10px; align-items: center; }
+.key { font-weight: 400; color: #5b6670; display: inline-flex; gap: 4px; align-items: center; }
+.key i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; margin-left: 6px; }
+.cw { position: relative; height: 92px; touch-action: pan-y; }
+.cbox:last-of-type .cw { height: 112px; }
+/* FWI 3 days */
+.fwis { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.fwic { border: 1px solid #e3e6e9; border-radius: 8px; padding: 8px; text-align: center; }
+.fwic .d { font-weight: 700; font-size: 13px; }
+.fwic .s { font-size: 11px; color: #5b6670; }
+.fwic .badge { display: inline-block; margin: 6px 0 2px; padding: 2px 8px; border-radius: 10px; font-size: 11.5px; font-weight: 700; }
+.fwic .big { font-size: 30px; font-weight: 750; line-height: 1.1; }
+.fwic .big span { font-size: 11px; font-weight: 600; color: #5b6670; margin-left: 3px; }
+.fwic dl { display: grid; grid-template-columns: auto auto; gap: 1px 6px; margin: 6px 0; font-size: 12px; justify-content: center; }
+.fwic dt { color: #5b6670; text-align: right; } .fwic dd { margin: 0; text-align: left; font-weight: 600; }
+.fwic .wx { font-size: 11.5px; color: #3c444c; border-top: 1px solid #f0f2f4; padding-top: 5px; }
+body.sheet-open #legend { bottom: calc(var(--sheet-h, 0px) + 24px); }
+@media (min-width: 701px) { body.sheet-open #legend { bottom: 24px; } }
+@media (max-width: 700px) {
+  #sheet { left: 0; right: 0; bottom: 0; width: auto; height: 56vh; border-radius: 14px 14px 0 0; }
+  #sheet.min { height: auto; }
+  .grab { display: block; position: absolute; left: 50%; top: 4px; width: 36px; height: 4px; margin-left: -18px; border-radius: 2px; background: #c3c8cd; }
+  .sh-head { padding-top: 14px; }
+  .tabs { justify-content: space-between; }
+  .tabs button { flex: 1; }
+  table.days th:nth-child(6), table.days td:nth-child(6) { display: none; }
+  .fwis { gap: 5px; }
+  .fwic { padding: 6px 4px; }
+  .fwic .big { font-size: 24px; }
+  body.sheet-open #status { bottom: calc(var(--sheet-h, 0px) + 8px); }
+  /* keep the map credits (required by OpenStreetMap) visible above the panel */
+  body.sheet-open .leaflet-bottom { bottom: var(--sheet-h, 0px); }
 }

@@ -13,28 +13,33 @@
 </head>
 <body>
 <header>
-  <h1>Fire Weather Forecast</h1>
-  <label>Area <select id="aoi"></select></label>
-  <button type="button" id="country" class="btn2" title="Show all areas across Canada">All of Canada</button>
-  <label>Date <input type="date" id="date"></label>
-  <label>Layer <select id="layer"></select></label>
-  <a id="pdf" class="btn" target="_blank" rel="noopener">Forecast PDF ↗</a>
+  <h1><span class="long">Fire Weather Forecast</span><span class="short">Fire Wx</span></h1>
+  <label class="area"><span class="lbl">Area</span> <select id="aoi" aria-label="Area"></select></label>
+  <!-- inline on wide screens; on phones this becomes the ⚙ settings panel -->
+  <div id="controls">
+    <button type="button" id="country" class="btn2" title="Show all areas across Canada">All of Canada</button>
+    <label>Date <input type="date" id="date"></label>
+    <label>Layer <select id="layer"></select></label>
+    <button type="button" id="bell" class="btn2 bell" title="Get a notification when ECCC issues a new alert">🔔<span class="long"> Notify me</span></button>
+    <div class="about">Daily grids from the <a href="https://cwfis.cfs.nrcan.gc.ca/" target="_blank" rel="noopener">Canadian Wildland Fire Information System</a> (NRCan), noon local standard time. Alerts from Environment and Climate Change Canada. The PDF covers the day before the selected date through the end of the CWFIS forecast.</div>
+  </div>
+  <a id="pdf" class="btn" target="_blank" rel="noopener"><span class="long">Forecast </span>PDF ↗</a>
   <span id="status" role="status"></span>
   <span class="spacer"></span>
   <button type="button" id="alert-chip" class="chip" title="ECCC weather alerts for the areas">Alerts</button>
-  <button type="button" id="bell" class="chip" title="Get a notification when ECCC issues a new alert">🔔 Notify me</button>
+  <button type="button" id="gear" class="chip gear" aria-label="Settings" aria-expanded="false">⚙</button>
 </header>
 <main>
   <div id="map"></div>
   <aside id="alerts" class="panel" hidden></aside>
   <aside id="notify" class="panel" hidden></aside>
-  <aside id="legend" hidden>
+  <aside id="legend" hidden title="Tap to show or hide the legend">
     <b id="legend-title"></b>
     <img id="legend-img" alt="Legend">
     <div class="sub" id="legend-date"></div>
   </aside>
 </main>
-<footer>Daily grids from the <a href="https://cwfis.cfs.nrcan.gc.ca/" target="_blank" rel="noopener">Canadian Wildland Fire Information System</a> (NRCan), noon local standard time. The PDF covers the day before the selected date through the end of the CWFIS forecast.</footer>
+<footer>Daily grids from the <a href="https://cwfis.cfs.nrcan.gc.ca/" target="_blank" rel="noopener">Canadian Wildland Fire Information System</a> (NRCan), noon local standard time. Alerts from Environment and Climate Change Canada. The PDF covers the day before the selected date through the end of the CWFIS forecast.</footer>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="/static/app.js"></script>
 </body>

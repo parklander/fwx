@@ -170,7 +170,8 @@
     const active = ALERTS.areas.filter((a) => a.alerts.length);
     const chip = $("alert-chip");
     chip.className = "chip" + (active.length ? ` on lvl-${worst(active.flatMap((a) => a.alerts))}` : "");
-    chip.textContent = active.length ? `⚠ Alerts: ${active.length} area${active.length > 1 ? "s" : ""}` : "No alerts";
+    chip.innerHTML = active.length ? `⚠<span class="long"> Alerts:</span> ${active.length}<span class="long"> area${active.length > 1 ? "s" : ""}</span>`
+                                   : `<span class="long">No alerts</span><span class="short">✓ 0</span>`;
     markAlertedAreas();
     const panel = $("alerts");
     if (!alertsOpen) { panel.hidden = true; return; }
@@ -196,7 +197,7 @@
     try { ALERTS = await (await fetch("/api/alerts")).json(); } catch (_) { return; }
     renderAlerts();
   }
-  $("alert-chip").onclick = () => { alertsOpen = !alertsOpen; $("notify").hidden = true; renderAlerts(); };
+  $("alert-chip").onclick = () => { alertsOpen = !alertsOpen; $("notify").hidden = true; closeSettings(); renderAlerts(); };
   const aoiChange = $("aoi").onchange;
   $("aoi").onchange = () => { aoiChange(); renderAlerts(); };
   setInterval(loadAlerts, 2 * 60e3);
@@ -217,7 +218,7 @@
     const sub = await swReg.pushManager.getSubscription();
     mySub = sub ? await post("/api/push/status", { endpoint: sub.endpoint }).catch(() => ({ subscribed: false, areas: [] }))
                 : { subscribed: false, areas: [] };
-    $("bell").textContent = mySub.subscribed ? "🔔 Notifications on" : "🔔 Notify me";
+    $("bell").innerHTML = mySub.subscribed ? `🔔<span class="long"> Notifications on</span>` : `🔔<span class="long"> Notify me of alerts</span>`;
     $("bell").classList.toggle("on", mySub.subscribed);
   }
   function renderNotify(msg) {
@@ -272,11 +273,31 @@
   }
   $("bell").onclick = async () => {
     if (!$("notify").hidden) { $("notify").hidden = true; return; }
-    alertsOpen = false; $("alerts").hidden = true;
+    alertsOpen = false; $("alerts").hidden = true; closeSettings();
     await pushState().catch(() => {});
     renderNotify();
   };
   pushState().catch(() => {});
+
+  // ---- phones: ⚙ opens Date, Layer and All of Canada; the legend collapses on tap ------------------
+  const phone = window.matchMedia("(max-width: 700px)");
+  function closeSettings() { document.body.classList.remove("settings-open"); $("gear").classList.remove("on"); $("gear").setAttribute("aria-expanded", "false"); }
+  $("gear").onclick = () => {
+    const open = !document.body.classList.contains("settings-open");
+    if (open) {
+      document.documentElement.style.setProperty("--hdr", `${document.querySelector("header").getBoundingClientRect().bottom + 6}px`);
+      alertsOpen = false; $("alerts").hidden = true; $("notify").hidden = true;
+    }
+    document.body.classList.toggle("settings-open", open);
+    $("gear").classList.toggle("on", open);
+    $("gear").setAttribute("aria-expanded", String(open));
+  };
+  map.on("click", closeSettings);
+  $("country").addEventListener("click", () => { if (phone.matches) closeSettings(); });
+  $("legend").onclick = () => $("legend").classList.toggle("collapsed");
+  if (phone.matches) $("legend").classList.add("collapsed");
+  // the header's height changes with the window; keep the map filling the rest
+  window.addEventListener("resize", () => map.invalidateSize());
 
   showCountry();
   showArea(false);

@@ -10,11 +10,16 @@ A small web page with three pickers (area, date, layer) over a map of the CWFIS 
 
 ## Area panel
 
-Picking an area (from the list, or by tapping it on the map) opens a panel at the bottom of the screen, beside the map on wider screens, with three tabs:
+Picking an area (from the list, or by tapping it on the map) opens a panel at the bottom of the screen, beside the map on wider screens, with four tabs:
 
 - **Forecast:** the next 24 hours hour by hour, and a 7-day outlook (high/low, rain, wind and gusts, lowest RH, peak FWI) from ECCC's GEM models via [Open-Meteo](https://open-meteo.com/) (`gem_seamless`: HRDPS, then RDPS, then GDPS).
 - **Fire weather:** hourly meteograms for temperature, RH, wind and gusts, rain, FFMC and FWI over 48 hours, 3 days or 7 days. Touch or hover any chart to read every value at that hour.
 - **FWI 3 days:** CWFIS's daily values for today, tomorrow and the day after: danger class, FWI, the area's worst cell, ISI, BUI, FFMC, DMC, DC and noon weather.
+- **Rx:** each forecast hour from 0600 to 2100 checked against prescribed burn limits, as a timeline per day (3 or 7 days): green **GO** (within every enabled limit), yellow **CAUTION** (within every limit but close to one), red **NO-GO** (outside at least one), grey where a value isn't forecast yet. The ignition period (default 1100–1700) is outlined. Each day gets a verdict, its GO windows and the limits that stopped it most often. Tapping an hour shows every value with ✓, ! or ✗.
+
+  The default limits are the fire-modeling viewer's prescription (Annex A): temperature 10–24 °C, RH 20–45 %, wind ≤ 22 km/h, FFMC 77–90, ISI 4–7, FWI < 12, DMC < 25, DC < 210, BUI < 30. Gusts, wind direction and rain in the hour are there but off. *Prescription limits* edits them and turns them on or off, and they're saved in the browser for each area. The caution margins are ±2 °C, ±5 % RH, 3 km/h wind, 5 km/h gusts, 15° direction, 1 FFMC, 0.5 ISI, 1 FWI, 2 DMC, 15 DC and 3 BUI.
+
+  Weather and hourly FFMC, ISI and FWI are the Fire weather tab's. DMC, DC and BUI are CWFIS's daily values, so hours past the end of the CWFIS forecast are grey while those limits are on. Atmospheric stability, ventilation index and air quality, which the fire-modeling prescription also checks, aren't available here.
 
 The hourly FFMC, ISI and FWI in the first two tabs are calculated by this app ([wxpoint.py](wxpoint.py)), not by CWFIS. They start from CWFIS's daily FFMC at noon yesterday and step through the Open-Meteo hourly weather with the hourly FFMC equations (Van Wagner 1977, as in the cffdrs package's `hffmc`), using CWFIS's daily BUI. They show the shape of the day: overnight recovery, the afternoon peak, the effect of rain.
 

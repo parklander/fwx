@@ -132,6 +132,8 @@ def _area_panel(area):
         first, last = _period((t - timedelta(days=1)).isoformat())
         rows = cwfis.area_daily(area, first, last)  # same days and cache as the default PDF
         out["fwi_days"] = [r for r in rows if t.isoformat() <= r["date"] <= (t + timedelta(days=2)).isoformat()]
+        # daily codes for the Rx tab's prescription check, every day CWFIS has
+        out["daily_codes"] = [{k: r.get(k) for k in ("date", "dmc", "dc", "bui")} for r in rows]
     except Exception as e:
         log.warning("CWFIS for %s: %s", area["id"], e)
         out["errors"]["cwfis"] = "CWFIS isn't answering right now"

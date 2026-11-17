@@ -2,6 +2,7 @@
 
 Run:  uvicorn app:app --host 127.0.0.1 --port 8000
 """
+import hashlib
 import json
 import logging
 import os
@@ -224,9 +225,28 @@ def manifest():
     return FileResponse(ROOT / "static" / "manifest.webmanifest", media_type="application/manifest+json")
 
 
+def _versioned_index():
+    """index.html with ?v=<content hash> on its own scripts and stylesheet.
+
+    Browsers (installed phone apps especially) cache /static files for a while and could run an old panel.js
+    under a new index.html. A new hash after every deploy makes them fetch the new files.
+    """
+    html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+
+    def ver(m):
+        f = ROOT / "static" / m[2]
+        if not f.is_file():
+            return m[0]
+        return f'{m[1]}/static/{m[2]}?v={hashlib.sha1(f.read_bytes()).hexdigest()[:10]}"'
+    return re.sub(r'((?:src|href)=")/static/([\w.-]+\.(?:js|css))"', ver, html)
+
+
+_INDEX = _versioned_index()
+
+
 @app.get("/")
 def index():
-    return FileResponse(ROOT / "static" / "index.html", headers={"Cache-Control": "no-cache"})
+    return Response(_INDEX, media_type="text/html", headers={"Cache-Control": "no-cache"})
 
 
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")

@@ -6,12 +6,45 @@
   const iso = (d) => d.toISOString().slice(0, 10);
   const today = iso(new Date(Date.now() - new Date().getTimezoneOffset() * 60000));
   const prefs = (() => { try { return JSON.parse(localStorage.getItem("cwfis-prefs") || "{}"); } catch (_) { return {}; } })();
-  const save = () => { try { localStorage.setItem("cwfis-prefs", JSON.stringify({ aoi: $("aoi").value, layer: $("layer").value, wind: $("wind").value, precip: $("precip").value })); } catch (_) {} };
+  const save = () => { try { localStorage.setItem("cwfis-prefs", JSON.stringify({ aoi: $("aoi").value, layer: $("layer").value, wind: $("wind").value, precip: $("precip").value, basemap: $("basemap").value })); } catch (_) {} };
 
   const map = L.map("map", { zoomControl: true }).setView([55, -97], 4);
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    maxZoom: 18, attribution: "© OpenStreetMap contributors · Fire weather © NRCan CWFIS",
-  }).addTo(map);
+
+  // ---- basemaps: Esri dark gray canvas (default), Esri imagery or OpenStreetMap -------------------
+  // Esri's place names go in their own pane above the fire weather, satellite and precipitation layers.
+  map.createPane("labels");
+  map.getPane("labels").style.zIndex = 420;
+  map.getPane("labels").style.pointerEvents = "none";
+  const ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services";
+  const ESRI_TERMS = '<a href="https://www.esri.com/en-us/legal/terms/full-master-agreement" target="_blank" rel="noopener">Esri terms</a>';
+  const esri = (svc, o = {}) => L.tileLayer(`${ESRI}/${svc}/MapServer/tile/{z}/{y}/{x}`, o);
+  const BASEMAPS = {
+    dark: { label: "Dark gray", dark: true, make: () => [
+      esri("Canvas/World_Dark_Gray_Base", { maxNativeZoom: 16, maxZoom: 18,
+        attribution: `Esri, HERE, Garmin, © OpenStreetMap contributors, and the GIS user community · ${ESRI_TERMS}` }),
+      esri("Canvas/World_Dark_Gray_Reference", { maxNativeZoom: 16, maxZoom: 18, pane: "labels" }),
+    ] },
+    imagery: { label: "Imagery", dark: true, make: () => [
+      esri("World_Imagery", { maxNativeZoom: 19, maxZoom: 19,
+        attribution: `Esri, Maxar, Earthstar Geographics, and the GIS User Community · ${ESRI_TERMS}` }),
+      esri("Reference/World_Boundaries_and_Places", { maxNativeZoom: 19, maxZoom: 19, pane: "labels" }),
+    ] },
+    osm: { label: "OpenStreetMap", dark: false, make: () => [
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 18, attribution: "© OpenStreetMap contributors" }),
+    ] },
+  };
+  $("basemap").innerHTML = Object.entries(BASEMAPS).map(([k, b]) => `<option value="${k}">${b.label}</option>`).join("");
+  $("basemap").value = BASEMAPS[prefs.basemap] ? prefs.basemap : "dark";
+  let baseLayers = [];
+  const darkBase = () => BASEMAPS[$("basemap").value].dark;
+  function setBasemap() {
+    baseLayers.forEach((l) => map.removeLayer(l));
+    baseLayers = BASEMAPS[$("basemap").value].make();
+    baseLayers.forEach((l) => l.addTo(map));
+    map.setMaxZoom(baseLayers[0].options.maxZoom);
+    document.body.classList.toggle("dark-base", darkBase());
+  }
+  setBasemap();
 
   let wind = null;  // RDPS wind overlay, set up once the RDPS metadata arrives
 
@@ -24,8 +57,11 @@
   // every area: its box (or a dot where it has none) with a label; click one to select it
   const areaLayer = L.layerGroup().addTo(map);
   const shapes = {};
+  // area outlines: dark on the light OSM map, light on the dark gray and imagery basemaps
   const styleFor = (on) => on ? { color: "#e8590c", weight: 3, fill: true, fillColor: "#e8590c", fillOpacity: 0.12 }
-                              : { color: "#111", weight: 1.5, fill: true, fillColor: "#111", fillOpacity: 0.06 };
+    : darkBase() ? { color: "#f1f3f5", weight: 1.5, fill: true, fillColor: "#fff", fillOpacity: 0.06 }
+    : { color: "#111", weight: 1.5, fill: true, fillColor: "#111", fillOpacity: 0.06 };
+  const dotStyle = () => ({ color: darkBase() ? "#f1f3f5" : "#111" });
   for (const a of areas) {
     const g = L.featureGroup().addTo(areaLayer);
     if (a.bbox) {
@@ -33,7 +69,7 @@
       L.rectangle([[s, w], [n, e]], styleFor(false)).addTo(g);
     }
     // the dot keeps small areas visible at country scale
-    L.circleMarker([a.lat, a.lon], { radius: 4, color: "#111", weight: 1.5, fillColor: "#fff", fillOpacity: 1 }).addTo(g)
+    L.circleMarker([a.lat, a.lon], { radius: 4, ...dotStyle(), weight: 1.5, fillColor: darkBase() ? "#1d2329" : "#fff", fillOpacity: 1 }).addTo(g)
       .bindTooltip(a.name, { permanent: true, interactive: true, direction: "right", offset: [6, 0], className: "aoi-label" });
     g.on("click", () => { $("aoi").value = a.id; $("aoi").onchange(); });
     // a label hidden to avoid overlap shows while the pointer is on its dot or box
@@ -158,7 +194,7 @@
     const id = $("layer").value, sat = isSat(id);
     $("date").disabled = sat;
     $("date").title = sat ? "The satellite layer shows the latest image" : "";
-    wind?.setLight(!sat);  // white wind streaks over the dark satellite image
+    wind?.setLight(!sat && !darkBase());  // white wind streaks over the satellite image and dark basemaps
     if (sat) { showSat(); }
     else {
       const l = layerById[id];
@@ -420,7 +456,7 @@
     try { m = await (await fetch("/api/rdps")).json(); } catch (_) { return; }
     const keep = curHour()?.valid;
     WM = m;
-    if (!wind && m.width) { wind = WindLayer(map, $("wind-canvas"), m, { light: !isSat($("layer").value) }); wind.setMode("off"); }
+    if (!wind && m.width) { wind = WindLayer(map, $("wind-canvas"), m, { light: !isSat($("layer").value) && !darkBase() }); wind.setMode("off"); }
     // hours from the current hour on (the run starts a little before now)
     const now = Date.now() - 3600e3;
     rdpsHours = (m.hours || []).map((h) => ({ ...h, t: new Date(h.valid.replace("Z", ":00Z")) })).filter((h) => h.t.getTime() >= now);
@@ -525,6 +561,16 @@
   $("wb-close").onclick = () => { $("wind").value = "off"; $("precip").value = "off"; save(); showRdps(); };
   $("wind").value = ["particles", "arrows"].includes(prefs.wind) ? prefs.wind : "off";
   $("precip").value = prefs.precip === "on" ? "on" : "off";
+  $("basemap").onchange = () => {
+    setBasemap(); save();
+    const id = $("aoi").value;
+    for (const [k, g] of Object.entries(shapes)) g.eachLayer((x) => {
+      if (x instanceof L.Rectangle) x.setStyle(styleFor(k === id));
+      else x.setStyle({ ...dotStyle(), fillColor: darkBase() ? "#1d2329" : "#fff" });
+    });
+    wind?.setLight(!isSat($("layer").value) && !darkBase());
+    if (phone.matches) closeSettings();
+  };
   $("wind").onchange = $("precip").onchange = () => { save(); showRdps(); if (phone.matches) closeSettings(); };
 
   // ---- phones: ⚙ opens Date, Layer and All of Canada; the legend collapses on tap ------------------

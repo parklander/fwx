@@ -239,3 +239,6 @@ body.sheet-open #legend { bottom: calc(var(--sheet-h, 0px) + 24px); }
 }
 .rng { flex-wrap: wrap; align-items: center; }
 .rng button { white-space: nowrap; }
+/* dark basemaps: dark area labels so they don't glare */
+.dark-base .leaflet-tooltip.aoi-label:not(.on):not(.alert) { background: rgba(29, 35, 41, 0.85); color: #f1f3f5; }
+.dark-base .leaflet-container { background: #262a2e; }

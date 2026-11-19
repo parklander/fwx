@@ -21,6 +21,7 @@ from fastapi.concurrency import run_in_threadpool
 import alerts
 import cwfis
 import goes
+import snowdepth
 import push
 import report_pdf
 import rdps
@@ -89,6 +90,12 @@ async def layers():
 async def goes_times():
     """GOES-East/West natural colour (GeoMet WMS) and each layer's current time range."""
     return {"wms": goes.WMS, "layers": await run_in_threadpool(goes.times)}
+
+
+@app.get("/api/snow")
+async def snow_layers():
+    """GeoMet snow depth layers (CaLDAS analysis, HRDPS forecast) and their current time windows."""
+    return {"wms": snowdepth.WMS, "layers": await run_in_threadpool(snowdepth.layers)}
 
 
 def _period(start):

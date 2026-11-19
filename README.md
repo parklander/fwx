@@ -37,6 +37,8 @@ The **Layer** list has a *Satellite (GOES)* group with **Natural colour**: the l
 
 **Precip** (Off, Rate by type) colours the RDPS precipitation that falls in the hour ending at the time shown, with the same types, colours and labels as the fire-modeling viewer: one intensity ramp each for rain, rain/snow mix, freezing rain, ice pellets and snow, from 0.05 mm/h (faint) upward, and nothing where it's dry. The key under the hour bar runs 0.1 → 10 mm/h for each type.
 
+**Precip → Snow from now** adds up the snow from the current hour to the hour on the bar: each hour's RDPS precipitation classed as snow, plus half of any rain/snow mix, shown as snowfall at 10:1 (1 mm of water ≈ 1 cm of snow). The page works it out from the same hourly frames, so the server does nothing extra. The colours run from pale blue at 1 cm to deep purple at 50 cm or more, and the readout gives the total at the pointer, e.g. "Snow since now ≈ 12 cm".
+
 Both use a bar at the top of the map that steps through the hours from now to 48 hours ahead (−1h / +1h, or ▶ to play them). Hovering or tapping the map shows the values there, e.g. "Snow 0.8 mm/h · 24 km/h from NW (315°)".
 
 The server ([rdps.py](rdps.py)) checks the MSC Datamart every 10 minutes for a newer RDPS run. Once a run's files reach 48 hours past now, it downloads for each hour `WindSpeed_AGL-10m`, `WindDir_AGL-10m`, `Precip-Accum_Sfc`, `PrecipType-Instant_Sfc` and `AirTemp_AGL-2m` (about 260 GRIB2 files), regrids them from the rotated lat-lon grid onto a Web Mercator raster over Canada, and keeps one-byte frames in `data/rdps/`:
@@ -49,6 +51,15 @@ Only the newest complete run is kept, and the previous one is served until the n
 RDPS has no 2 m wind. 10 m is the height the FWI System, the FBP System and CWFIS use.
 
 `FW_RDPS=0` turns the downloads off. `FW_WIND_HOURS` (default 48) sets how far ahead they go.
+
+## Snow depth (ECCC)
+
+The **Layer** list has two snow depth layers from ECCC's MSC GeoMet map service ([snowdepth.py](snowdepth.py) reads each one's current time window):
+
+- **Snow on ground (CaLDAS analysis):** `CaLDAS-NSRPS_2.5km_SnowDepth`, the CaLDAS-NSRPS land-surface analysis of snow on the ground, 2.5 km, every 3 hours. The map shows the latest analysis. ([product](https://eccc-msc.github.io/open-data/msc-data/nwp_caldas-nsrps/readme_caldas-nsrps_en/))
+- **Snow depth forecast (HRDPS):** `HRDPS.CONTINENTAL_SD`, hourly, about 48 hours ahead, starting from the CaLDAS analysis and adding new snowfall and melt. It follows the hour on the wind/precip bar when that's open, otherwise the hour nearest now. ([product](https://eccc-msc.github.io/open-data/msc-data/nwp_hrdps/readme_hrdps_en/))
+
+Both use GeoMet's `SNOWDEPTH` style and legend. If a layer's newest model run is more than 18 hours old, the legend says ECCC hasn't updated it. Data Source: Environment and Climate Change Canada ([licence](https://eccc-msc.github.io/open-data/licence/readme_en/)).
 
 ## Alerts and notifications
 

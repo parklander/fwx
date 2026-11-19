@@ -145,10 +145,19 @@
   };
   const SAT_SPLIT_LON = -105;  // GOES-West west of here: it sees BC and Yukon at a far better angle
   const isSat = (id) => id in SAT;
+  // Snow depth from ECCC GeoMet: the CaLDAS analysis of snow on the ground, and the HRDPS forecast (see snowdepth.py)
+  const SNOWL = {
+    snow_caldas: { key: "caldas", title: "Snow on ground (CaLDAS analysis)",
+      desc: "Estimated snow on the ground from ECCC's CaLDAS land-surface analysis (2.5 km, every 3 h). No colour means no snow." },
+    snow_hrdps: { key: "hrdps", title: "Snow depth forecast (HRDPS)",
+      desc: "Forecast snow depth from ECCC's HRDPS (2.5 km, hourly, about 2 days ahead), starting from the CaLDAS analysis and adding new snowfall and melt. No colour means no snow." },
+  };
+  const isSnowL = (id) => id in SNOWL;
   // "none": just the basemap, e.g. to read the wind and precipitation overlays on their own
   $("layer").innerHTML = `<option value="none">None (basemap only)</option><optgroup label="CWFIS daily">${info.layers.map((l) => `<option value="${l.id}">${l.title}</option>`).join("")}</optgroup>`
-    + `<optgroup label="Satellite (GOES)">${Object.entries(SAT).map(([id, s]) => `<option value="${id}">${s.title}</option>`).join("")}</optgroup>`;
-  $("layer").value = layerById[prefs.layer] || isSat(prefs.layer) || prefs.layer === "none" ? prefs.layer
+    + `<optgroup label="Satellite (GOES)">${Object.entries(SAT).map(([id, s]) => `<option value="${id}">${s.title}</option>`).join("")}</optgroup>`
+    + `<optgroup label="Snow (ECCC)">${Object.entries(SNOWL).map(([id, s]) => `<option value="${id}">${s.title}</option>`).join("")}</optgroup>`;
+  $("layer").value = layerById[prefs.layer] || isSat(prefs.layer) || isSnowL(prefs.layer) || prefs.layer === "none" ? prefs.layer
     : info.layers.some((l) => l.id === "fwi") ? "fwi" : info.layers[0]?.id || "sat_natural";
 
   function setDateRange() {
@@ -191,16 +200,63 @@
     $("legend").hidden = false;
   }
 
+  // ---- snow depth layers ----
+  let SNOW = null, barHour = () => null;  // barHour: the wind/precip hour bar's hour, once that code has run
+  async function loadSnow() {
+    try { SNOW = await (await fetch("/api/snow")).json(); } catch (_) { return; }
+    if (isSnowL($("layer").value)) showSnowL();
+  }
+  const isoHour = (d) => `${d.toISOString().slice(0, 13)}:00:00Z`;
+  const fmtT = (s) => new Date(s).toLocaleString("en-CA", { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false, timeZoneName: "short" });
+  function snowLTime(key, L0) {  // -> [time, clamped]
+    if (key === "caldas") return [L0.end, false];  // the latest analysis
+    // the HRDPS forecast follows the wind/precip hour bar when it's open, otherwise the hour nearest now
+    const h = !$("windbar").hidden ? barHour() : null;
+    const want = h ? h.t : new Date(Math.round(Date.now() / 3600e3) * 3600e3);
+    const t = Math.min(Math.max(want.getTime(), Date.parse(L0.start)), Date.parse(L0.end));
+    return [isoHour(new Date(t)), Math.abs(t - want.getTime()) >= 3600e3];
+  }
+  function showSnowL() {
+    const spec = SNOWL[$("layer").value], L0 = SNOW?.layers?.[spec.key];
+    $("legend-title").textContent = spec.title;
+    if (!L0) {
+      if (wms) { map.removeLayer(wms); wms = null; }
+      $("legend-img").hidden = true;
+      $("legend-date").textContent = SNOW ? "This ECCC layer is unavailable right now." : "Loading…";
+      $("legend").hidden = false;
+      return;
+    }
+    const [time, clamped] = snowLTime(spec.key, L0);
+    if (!wms || wms.options.layers !== L0.layer || wms._url !== SNOW.wms) {
+      if (wms) map.removeLayer(wms);
+      wms = L.tileLayer.wms(SNOW.wms, { layers: L0.layer, styles: L0.style, format: "image/png", transparent: true,
+        version: "1.3.0", time, opacity: 0.8, attribution: "Snow depth: Data Source: Environment and Climate Change Canada" }).addTo(map);
+      wms.on("loading", () => status("Loading snow depth…"));
+      wms.on("load", () => status(""));
+    } else if (wms.wmsParams.time !== time) {
+      wms.setParams({ time });
+    }
+    $("legend-img").hidden = false;
+    $("legend-img").src = `${SNOW.wms}?service=WMS&version=1.3.0&request=GetLegendGraphic&sld_version=1.1.0&format=image/png&layer=${L0.layer}&STYLE=${L0.style}`;
+    const run = L0.run ? `${L0.run.slice(11, 13)}Z ${L0.run.slice(8, 10)}/${L0.run.slice(5, 7)}` : "";
+    $("legend-date").innerHTML = `${spec.desc}<br><b>${spec.key === "caldas" ? "Analysis" : "Forecast for"} ${fmtT(time)}</b>`
+      + (spec.key === "hrdps" && run ? ` · run ${run}` : "")
+      + (clamped ? `<br>The HRDPS forecast doesn't cover the hour on the bar; this is its nearest hour.` : "")
+      + (L0.stale ? `<br><b>ECCC hasn't updated this layer since the ${run} run, so this may be out of date.</b>` : "");
+    $("legend").hidden = false;
+  }
+
   function showLayer() {
-    const id = $("layer").value, sat = isSat(id);
-    $("date").disabled = sat;
-    $("date").title = sat ? "The satellite layer shows the latest image" : "";
+    const id = $("layer").value, sat = isSat(id), snowL = isSnowL(id);
+    $("date").disabled = sat || snowL;
+    $("date").title = sat ? "The satellite layer shows the latest image" : snowL ? "Snow depth shows the latest analysis or the forecast hour" : "";
     wind?.setLight(!sat && !darkBase());  // white wind streaks over the satellite image and dark basemaps
     if (id === "none") {
       if (wms) { map.removeLayer(wms); wms = null; }
       $("legend").hidden = true;
       status("");
     } else if (sat) { showSat(); }
+    else if (snowL) { showSnowL(); }
     else {
       const l = layerById[id];
       if (!l) return;
@@ -225,6 +281,7 @@
   // GOES-East/West swap as the map crosses SAT_SPLIT_LON; new images every 10 min
   map.on("moveend", () => { if (isSat($("layer").value)) showSat(); });
   setInterval(loadGoes, 5 * 60e3);
+  setInterval(loadSnow, 10 * 60e3);
 
   function updatePdfLink() {
     const d = $("date").value || today;
@@ -383,6 +440,7 @@
   const hourLabel = (t) => t.toLocaleString("en-CA", { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false, timeZoneName: "short" });
   let WM = null, rdpsHours = [], rdpsFrames = new Map(), shown = {}, playing = null, metaTimer = null;
   const curHour = () => rdpsHours[+$("wb-hour").value];
+  barHour = curHour;
   const windOn = () => $("wind").value !== "off", precipOn = () => $("precip").value !== "off";
 
   // Precipitation rate (mm/h) coloured by type, as in the fire-modeling viewer: one intensity ramp per type,
@@ -442,6 +500,68 @@
     pctx.putImageData(pImg, 0, 0);
     if (!map.hasLayer(pOverlay)) pOverlay.addTo(map);
   }
+  // ---- snow from now: the hourly snow (rate × hours classed as snow; half of rain/snow mix) added up from the
+  // current hour to the hour on the bar, shown as snowfall at the usual 10:1 ratio (1 mm water ≈ 1 cm snow)
+  const SNOW_STOPS = [[0.2, "#cde2fb", 0.45], [1, "#86b6ef", 0.75], [5, "#3987e5", 0.9], [10, "#1c5cab"], [25, "#104281"], [50, "#2b0a5c"]];
+  const SNOW_TICKS = [1, 5, 10, 25, 50];
+  const SNOW_FRAC = [0, 0, 0.5, 0, 0, 1];  // share of each type that counts as snow: mix half, snow all
+  const snowMode = () => $("precip").value === "snow";
+  let SNOWQ = null;  // precip byte -> mm of snow (water) if that rate fell for an hour
+  function snowPerHour() {
+    if (SNOWQ) return SNOWQ;
+    SNOWQ = new Float32Array(256);
+    for (let q = 2; q < 256; q++) { const p = precipOf(q); if (p) SNOWQ[q] = p.rate * SNOW_FRAC[p.type]; }
+    return SNOWQ;
+  }
+  const snowSpan = (cm) => Math.log(cm / 0.2) / Math.log(60 / 0.2);  // key position for cm (log scale 0.2 → 60)
+  let snowAcc = null;  // { run, from, k, cm: Float32Array, gaps } – the running total up to bar position k
+  async function snowTotal(run, k) {
+    const from = rdpsHours[0]?.valid;
+    if (!snowAcc || snowAcc.run !== run || snowAcc.from !== from || snowAcc.k > k) {
+      snowAcc = { run, from, k: 0, cm: new Float32Array(WM.width * WM.height), gaps: 0 };
+    }
+    const S = snowPerHour();
+    // what fell in the hour ending at each bar position after the first (the first hour ended before now)
+    for (let j = snowAcc.k + 1; j <= k; j++) {
+      const h = rdpsHours[j];
+      if (!h.precip) { snowAcc.gaps++; snowAcc.k = j; continue; }
+      const q = await frame(run, "precip", h.fh);
+      if (snowAcc.run !== run || snowAcc.k !== j - 1) return snowTotal(run, k);  // restarted meanwhile
+      const cm = snowAcc.cm;
+      for (let i = 0; i < q.length; i++) if (q[i] > 1) cm[i] += S[q[i]];
+      snowAcc.k = j;
+    }
+    return snowAcc;
+  }
+  let SLUT = null;
+  function snowLut() {  // 0.1 cm steps up to 102 cm -> RGBA
+    if (SLUT) return SLUT;
+    SLUT = new Uint32Array(1024);
+    for (let i = 2; i < 1024; i++) {
+      const [r, g, b, a] = rampColor(SNOW_STOPS, i / 10);
+      SLUT[i] = ((Math.round(a * 255) << 24) | (Math.round(b) << 16) | (Math.round(g) << 8) | Math.round(r)) >>> 0;
+    }
+    return SLUT;
+  }
+  function drawSnow(acc) {
+    if (!pCanvas || !acc) { drawPrecip(null); if (!acc) return; }  // makes the canvas the first time
+    const T = snowLut(), cm = acc.cm;
+    for (let i = 0; i < cm.length; i++) pImg32[i] = cm[i] < 0.2 ? 0 : T[Math.min(1023, Math.round(cm[i] * 10))];
+    pctx.putImageData(pImg, 0, 0);
+    if (!map.hasLayer(pOverlay)) pOverlay.addTo(map);
+  }
+  function drawSnowKey() {
+    const c = $("wb-pkey"), ctx = c.getContext("2d"), w = c.width;
+    ctx.clearRect(0, 0, w, c.height);
+    for (let x = 0; x < w; x++) {
+      const [r, g, b, a] = rampColor(SNOW_STOPS, 0.2 * Math.pow(60 / 0.2, x / (w - 1)));
+      ctx.fillStyle = `rgba(${r},${g},${b},${Math.max(a, 0.35)})`;
+      ctx.fillRect(x, 0, 1, c.height);
+    }
+    $("wb-pticks").innerHTML = SNOW_TICKS.map((v) => `<span style="left:${snowSpan(v) * 100}%">${v}${v === 50 ? " cm" : ""}</span>`).join("");
+    $("wb-pk").title = "Snow added up from the current hour to the time shown, as snowfall at 10:1 (1 mm water ≈ 1 cm); rain/snow mix counts half";
+  }
+
   function drawPrecipKey() {  // one gradient segment per type, 0.1 → 10 mm/h each
     const c = $("wb-pkey"), ctx = c.getContext("2d"), w = c.width, n = 5, bw = w / n;
     ctx.clearRect(0, 0, w, c.height);
@@ -454,6 +574,7 @@
       }
     }
     $("wb-pticks").innerHTML = PTYPE.slice(1).map((p, i) => `<span style="left:${((i + 0.5) / n) * 100}%">${p.key}</span>`).join("");
+    $("wb-pk").title = "Precipitation in the hour ending at the time shown, by type; each segment runs 0.1 → 10 mm/h";
   }
 
   async function loadRdpsMeta() {
@@ -481,21 +602,21 @@
       rdpsFrames.set(key, fetch(`/api/rdps/${run}/${v}/${fh}`)
         .then((r) => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); }).then((b) => new Uint8Array(b))
         .catch((e) => { rdpsFrames.delete(key); throw e; }));
-      while (rdpsFrames.size > 40) rdpsFrames.delete(rdpsFrames.keys().next().value);
+      while (rdpsFrames.size > 64) rdpsFrames.delete(rdpsFrames.keys().next().value);
     }
     return rdpsFrames.get(key);
   }
   // the frames the current settings need for an hour
   const framesFor = (run, h) => Promise.all([
     windOn() ? frame(run, "wspd", h.fh) : null, windOn() ? frame(run, "wdir", h.fh) : null,
-    precipOn() && h.precip ? frame(run, "precip", h.fh) : null,
+    precipOn() && !snowMode() && h.precip ? frame(run, "precip", h.fh) : null,
   ]);
 
   async function showRdps() {
     const mode = $("wind").value, pOn = precipOn();
     $("windbar").hidden = mode === "off" && !pOn;
     $("wb-pk").hidden = !pOn;
-    if (pOn) drawPrecipKey();
+    if (pOn) (snowMode() ? drawSnowKey : drawPrecipKey)();
     if (mode === "off" && !pOn) { stopPlay(); wind?.setMode("off"); if (pOverlay) drawPrecip(null); return; }
     if (!WM?.run || !rdpsHours.length) {
       $("wb-time").textContent = WM?.status === "error" ? "RDPS forecast unavailable right now"
@@ -508,12 +629,16 @@
     try {
       const [spd, dir, pq] = await framesFor(run, h);
       if (curHour() !== h) return;  // moved on while loading
-      shown = { spd, dir, pq };
+      const snow = pOn && snowMode() ? await snowTotal(run, +$("wb-hour").value) : null;
+      if (curHour() !== h) return;
+      shown = { spd, dir, pq, snow };
       wind.setFrames(spd, dir, "wspd", "wdir");
-      drawPrecip(pOn ? pq : null);
+      if (snow) drawSnow(snow); else drawPrecip(pOn ? pq : null);
+      if (snow) $("wb-time").textContent = `${hourLabel(h.t)} · snow since ${rdpsHours[0].t.toLocaleTimeString("en-CA", { hour: "2-digit", minute: "2-digit", hour12: false })}`;
       updateReadout();
       const nxt = rdpsHours[+$("wb-hour").value + 1];
-      if (nxt) framesFor(run, nxt).catch(() => {});  // prefetch the next hour
+      if (nxt) (snow ? frame(run, "precip", nxt.fh) : framesFor(run, nxt)).catch(() => {});  // prefetch the next hour
+      if ($("layer").value === "snow_hrdps") showSnowL();
     } catch (_) {
       $("wb-time").textContent = "Couldn't load this hour";
     }
@@ -531,7 +656,10 @@
     const y = Math.floor(((mercY(B.north) - mercY(ll.lat)) / (mercY(B.north) - mercY(B.south))) * WM.height);
     const i = x >= 0 && x < WM.width && y >= 0 && y < WM.height ? y * WM.width + x : -1;
     const parts = [];
-    if (precipOn()) {
+    if (precipOn() && snowMode()) {
+      const v = i >= 0 && shown.snow ? shown.snow.cm[i] : null;
+      parts.push(v == null ? "No precip data" : `Snow since now ≈ ${v < 10 ? v.toFixed(1) : Math.round(v)} cm${shown.snow.gaps ? " (some hours missing)" : ""}`);
+    } else if (precipOn()) {
       const q = i >= 0 && shown.pq ? shown.pq[i] : 0, p = q ? precipOf(q) : null;
       parts.push(!q ? "No precip data" : p ? `${WM.precip.types[p.type]} ${p.rate < 1 ? p.rate.toFixed(2) : p.rate.toFixed(1)} mm/h` : "Dry");
     }
@@ -565,7 +693,7 @@
   $("wb-hour").oninput = () => { stopPlay(); showRdps(); };
   $("wb-close").onclick = () => { $("wind").value = "off"; $("precip").value = "off"; save(); showRdps(); };
   $("wind").value = ["particles", "arrows"].includes(prefs.wind) ? prefs.wind : "off";
-  $("precip").value = prefs.precip === "on" ? "on" : "off";
+  $("precip").value = ["on", "snow"].includes(prefs.precip) ? prefs.precip : "off";
   $("basemap").onchange = () => {
     setBasemap(); save();
     const id = $("aoi").value;
@@ -605,5 +733,6 @@
   loadAlerts();
   loadRdpsMeta();
   loadGoes();
+  loadSnow();
   if (linked) { openPanel(); showArea(true); }
 })();

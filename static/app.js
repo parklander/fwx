@@ -145,9 +145,10 @@
   };
   const SAT_SPLIT_LON = -105;  // GOES-West west of here: it sees BC and Yukon at a far better angle
   const isSat = (id) => id in SAT;
-  $("layer").innerHTML = `<optgroup label="CWFIS daily">${info.layers.map((l) => `<option value="${l.id}">${l.title}</option>`).join("")}</optgroup>`
+  // "none": just the basemap, e.g. to read the wind and precipitation overlays on their own
+  $("layer").innerHTML = `<option value="none">None (basemap only)</option><optgroup label="CWFIS daily">${info.layers.map((l) => `<option value="${l.id}">${l.title}</option>`).join("")}</optgroup>`
     + `<optgroup label="Satellite (GOES)">${Object.entries(SAT).map(([id, s]) => `<option value="${id}">${s.title}</option>`).join("")}</optgroup>`;
-  $("layer").value = layerById[prefs.layer] || isSat(prefs.layer) ? prefs.layer
+  $("layer").value = layerById[prefs.layer] || isSat(prefs.layer) || prefs.layer === "none" ? prefs.layer
     : info.layers.some((l) => l.id === "fwi") ? "fwi" : info.layers[0]?.id || "sat_natural";
 
   function setDateRange() {
@@ -195,7 +196,11 @@
     $("date").disabled = sat;
     $("date").title = sat ? "The satellite layer shows the latest image" : "";
     wind?.setLight(!sat && !darkBase());  // white wind streaks over the satellite image and dark basemaps
-    if (sat) { showSat(); }
+    if (id === "none") {
+      if (wms) { map.removeLayer(wms); wms = null; }
+      $("legend").hidden = true;
+      status("");
+    } else if (sat) { showSat(); }
     else {
       const l = layerById[id];
       if (!l) return;

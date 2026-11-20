@@ -1,11 +1,15 @@
-"""Fire weather forecast PDF for one area, from CWFIS daily values (letter, landscape)."""
+"""Fire weather forecast PDF for one area, from CWFIS daily values (letter, portrait).
+
+Page 1 opens with a calendar of the period, each day coloured by its CWFIS fire danger class with the day's
+key numbers, then the full daily table and an FWI chart.
+"""
 import io
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from reportlab.graphics.charts.barcharts import VerticalBarChart
 from reportlab.graphics.shapes import Drawing, String
 from reportlab.lib import colors
-from reportlab.lib.pagesizes import landscape, letter
+from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
@@ -44,12 +48,12 @@ def build(area, rows, today=None, issued=None, alerts_in_effect=()):
     issued = issued or datetime.now().astimezone()
     has_box = bool(area.get("bbox"))
     buf = io.BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=landscape(letter), leftMargin=0.5 * inch, rightMargin=0.5 * inch,
+    doc = SimpleDocTemplate(buf, pagesize=letter, leftMargin=0.5 * inch, rightMargin=0.5 * inch,
                             topMargin=0.45 * inch, bottomMargin=0.45 * inch,
                             title=f"Fire Weather Forecast – {area['name']}", author="CWFIS fire weather forecast")
     ss = getSampleStyleSheet()
-    h1 = ParagraphStyle("h1", parent=ss["Heading1"], fontSize=17, spaceAfter=2)
-    small = ParagraphStyle("small", parent=ss["Normal"], fontSize=8.5, leading=11, textColor=colors.HexColor("#444444"))
+    h1 = ParagraphStyle("h1", parent=ss["Heading1"], fontSize=16, leading=19, spaceAfter=2)
+    small = ParagraphStyle("small", parent=ss["Normal"], fontSize=7.5, leading=9.5, textColor=colors.HexColor("#444444"))
     body = ParagraphStyle("body", parent=ss["Normal"], fontSize=10.5, leading=14)
     story = [
         Paragraph(f"Fire Weather Forecast — {area['name']}", h1),
@@ -59,18 +63,19 @@ def build(area, rows, today=None, issued=None, alerts_in_effect=()):
     ]
 
     if alerts_in_effect:
-        ast = ParagraphStyle("al", parent=body, fontSize=10, leading=13)
-        story.append(Paragraph("<b>ECCC alerts in effect</b>", body))
+        # one line: "ECCC alerts in effect: Wind Warning (issued Fri Nov 20 09:14) · Special Weather Statement"
+        parts = []
         for a in alerts_in_effect:
             col = ALERT_COLOURS.get(a.get("level"), "#5b6670")
             when = ""
             if a.get("issued"):
                 try:
-                    when = f" — issued {datetime.fromisoformat(a['issued'].replace('Z', '+00:00')).astimezone(issued.tzinfo):%a %b %-d %H:%M}"
+                    when = f" (issued {datetime.fromisoformat(a['issued'].replace('Z', '+00:00')).astimezone(issued.tzinfo):%a %b %-d %H:%M})"
                 except ValueError:
                     pass
-            story.append(Paragraph(f'<font color="{col}"><b>{_esc(a["name"])}</b></font>{when}', ast))
-        story.append(Spacer(1, 8))
+            parts.append(f'<font color="{col}"><b>{_esc(a["name"])}</b></font>{when}')
+        story.append(Paragraph("<b>ECCC alerts in effect:</b> " + " · ".join(parts), body))
+        story.append(Spacer(1, 6))
 
     fc = [r for r in rows if date.fromisoformat(r["date"]) >= today]
     if fc:
@@ -83,18 +88,24 @@ def build(area, rows, today=None, issued=None, alerts_in_effect=()):
             f"Forecast runs to {date.fromisoformat(fc[-1]['date']):%a %b %-d}.", body))
         story.append(Spacer(1, 8))
 
+    story += _calendar(rows, today, has_box)
+    story.append(Spacer(1, 10))
+    story.append(Paragraph("<b>Daily values</b>", body))
+    story.append(Spacer(1, 3))
+
     head = ["Date", "", "Danger", "Temp\n°C", "RH\n%", "Wind\nkm/h", "Rain\nmm", "FFMC", "DMC", "DC", "ISI", "BUI", "FWI"]
     if has_box:
         head += ["Area max\nFWI", "Area max\ndanger"]
     data = [head]
     style = [
-        ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 8.5),
-        ("FONT", (0, 1), (-1, -1), "Helvetica", 9.5),
+        ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 7.5),
+        ("FONT", (0, 1), (-1, -1), "Helvetica", 8.5),
+        ("TOPPADDING", (0, 1), (-1, -1), 1.2), ("BOTTOMPADDING", (0, 1), (-1, -1), 1.2),
         ("ALIGN", (3, 0), (-1, -1), "CENTER"),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("LINEBELOW", (0, 0), (-1, 0), 0.8, colors.black),
         ("GRID", (0, 1), (-1, -1), 0.25, colors.HexColor("#bbbbbb")),
-        ("FONT", (12, 1), (12, -1), "Helvetica-Bold", 9.5),
+        ("FONT", (12, 1), (12, -1), "Helvetica-Bold", 8.5),
     ]
     for i, r in enumerate(rows, start=1):
         d = date.fromisoformat(r["date"])
@@ -118,10 +129,10 @@ def build(area, rows, today=None, issued=None, alerts_in_effect=()):
             style.append(("LINEABOVE", (0, i), (-1, i), 1.2, colors.black))
         if d < today:
             style.append(("TEXTCOLOR", (0, i), (1, i), colors.HexColor("#666666")))
-    widths = [0.95, 0.42, 0.85, 0.5, 0.45, 0.7, 0.5, 0.55, 0.5, 0.5, 0.45, 0.5, 0.5] + ([0.7, 0.85] if has_box else [])
+    widths = [0.78, 0.36, 0.72, 0.4, 0.36, 0.56, 0.4, 0.44, 0.4, 0.42, 0.36, 0.4, 0.4] + ([0.52, 0.72] if has_box else [])
     t = Table(data, colWidths=[w * inch for w in widths], repeatRows=1)
     t.setStyle(TableStyle(style))
-    story += [t, Spacer(1, 12)]
+    story += [t, Spacer(1, 6)]
 
     story.append(_fwi_chart(rows, has_box))
     story.append(Spacer(1, 8))
@@ -137,25 +148,25 @@ def build(area, rows, today=None, issued=None, alerts_in_effect=()):
     if any(r.get("cell_km") for r in rows):
         km = max(r.get("cell_km") or 0 for r in rows)
         notes.insert(2, f"The reference point's cell had no data on some days; values came from a cell up to {km:.1f} km away.")
-    for n in notes:
-        story.append(Paragraph(n, small))
+    story.append(Paragraph(" ".join(notes), small))
     doc.build(story)
     return buf.getvalue()
 
 
 def _fwi_chart(rows, has_box):
-    w, h = 9.9 * inch, 1.9 * inch
+    w, h = 7.5 * inch, 1.45 * inch
     dr = Drawing(w, h)
     vals = [(r.get("fwi_max") if has_box else r.get("fwi")) or 0 for r in rows]
     ch = VerticalBarChart()
-    ch.x, ch.y, ch.width, ch.height = 40, 22, w - 60, h - 42
+    ch.x, ch.y, ch.width, ch.height = 40, 18, w - 60, h - 34
     ch.data = [vals]
     ch.categoryAxis.categoryNames = [f"{date.fromisoformat(r['date']):%a %-d}" for r in rows]
     ch.categoryAxis.labels.fontSize = 8
     ch.valueAxis.valueMin = 0
     ch.valueAxis.valueMax = max(35, (max(vals) if vals else 0) * 1.15)
     ch.valueAxis.labels.fontSize = 8
-    ch.barWidth = 10
+    ch.barWidth = 8
+    ch.categoryAxis.labels.fontSize = 7
     ch.bars.strokeColor = None
     for i, r in enumerate(rows):
         lab = (r.get("fdr_max_label") if has_box else None) or r.get("fdr_label")
@@ -164,3 +175,98 @@ def _fwi_chart(rows, has_box):
     dr.add(String(40, h - 12, "FWI by day" + (" (area max)" if has_box else "") + ", coloured by fire danger",
                   fontName="Helvetica-Bold", fontSize=9))
     return dr
+
+
+# ---- the calendar --------------------------------------------------------------------------------------
+DARK_TEXT = {"High", "Very High"}  # yellow and orange take dark text
+CELL_H = 1.0 * inch
+
+
+def _calendar(rows, today, has_box):
+    """Weeks (Sun-Sat) covering the report's days; each day a cell coloured by its danger class."""
+    if not rows:
+        return []
+    by = {r["date"]: r for r in rows}
+    first, last = date.fromisoformat(rows[0]["date"]), date.fromisoformat(rows[-1]["date"])
+    start = first - timedelta(days=(first.weekday() + 1) % 7)       # back to Sunday
+    end = last + timedelta(days=(5 - last.weekday()) % 7)            # on to Saturday
+    if (end - start).days < 6:
+        end = start + timedelta(days=6)
+    col_w = 7.5 * inch / 7
+    base = ParagraphStyle("cal", fontName="Helvetica", fontSize=7.3, leading=9)
+    head = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"]
+    data, style = [head], [
+        ("FONT", (0, 0), (-1, 0), "Helvetica-Bold", 8),
+        ("ALIGN", (0, 0), (-1, 0), "CENTER"),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#444444")),
+        ("VALIGN", (0, 1), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 1), (-1, -1), 0), ("RIGHTPADDING", (0, 1), (-1, -1), 0),
+        ("TOPPADDING", (0, 1), (-1, -1), 0), ("BOTTOMPADDING", (0, 1), (-1, -1), 0),
+    ]
+    d, week, ri = start, [], 1
+    while d <= end:
+        r = by.get(d.isoformat())
+        week.append(_day_cell(d, r, today, has_box, col_w, base))
+        ci = len(week) - 1
+        if r is None:
+            style.append(("BACKGROUND", (ci, ri), (ci, ri), colors.HexColor("#f2f3f4")))
+        if d == today:
+            style.append(("BOX", (ci, ri), (ci, ri), 2.2, colors.black))
+        if len(week) == 7:
+            data.append(week)
+            week, ri = [], ri + 1
+        d += timedelta(days=1)
+    style.append(("INNERGRID", (0, 1), (-1, -1), 0.6, colors.white))
+    style.append(("BOX", (0, 1), (-1, -1), 0.6, colors.HexColor("#bbbbbb")))
+    cal = Table(data, colWidths=[col_w] * 7, rowHeights=[13] + [CELL_H] * (len(data) - 1))
+    cal.setStyle(TableStyle(style))
+
+    months = sorted({(x.year, x.month) for x in (first, last)})
+    title = " – ".join(date(y, m, 1).strftime("%B %Y") for y, m in months) if len(months) > 1 else first.strftime("%B %Y")
+    hs = ParagraphStyle("calh", fontName="Helvetica-Bold", fontSize=10.5, leading=13)
+    return [Paragraph(f"Fire danger calendar · {title}", hs), Spacer(1, 3), cal, Spacer(1, 4), _legend(has_box)]
+
+
+def _day_cell(d, r, today, has_box, w, base):
+    """One day: a band with the date and danger class in its strong colour, the numbers on its tint below."""
+    num = f"{d:%b} {d.day}" if d.day == 1 or r is None and d.day < 8 else str(d.day)
+    if r is None:
+        return Paragraph(f'<font color="#9aa0a6">{num}</font>', ParagraphStyle("e", parent=base, leftIndent=4, spaceBefore=3))
+    lab = r.get("fdr_label")
+    strong, tint = DANGER.get(lab, ("#8a959f", "#eceff1"))
+    ink = "#1d2329" if lab in DARK_TEXT else "#ffffff"
+    kind = "obs" if d < today else ("today" if d == today else "fcst")
+    band_s = ParagraphStyle("b", parent=base, fontName="Helvetica-Bold", fontSize=8, leading=9.5, textColor=colors.HexColor(ink))
+    band = Paragraph(f'{num} <font size="6.3">{kind}</font><br/>{_esc(lab or "No rating")}', band_s)
+    lines = [f'<b>FWI {_f(r.get("fwi"), 1)}</b>']
+    if has_box and r.get("fwi_max") is not None:
+        mx = r.get("fdr_max_label")
+        lines.append(f'Max {_f(r.get("fwi_max"), 0)}' + (f" · {_esc(mx)}" if mx and mx != lab else ""))
+    lines.append(f'{_f(r.get("temp"))}° · RH {_f(r.get("rh"))}%')
+    lines.append(f'Wind {_wind(r)}')
+    if r.get("precip"):
+        lines.append(f'Rain {_f(r.get("precip"), 1)} mm')
+    body = Paragraph("<br/>".join(lines), ParagraphStyle("d", parent=base))
+    t = Table([[band], [body]], colWidths=[w], rowHeights=[23, CELL_H - 23])
+    t.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (0, 0), colors.HexColor(strong)),
+        ("BACKGROUND", (0, 1), (0, 1), colors.HexColor(tint)),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 4), ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+        ("TOPPADDING", (0, 0), (-1, -1), 2.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 1),
+    ]))
+    return t
+
+
+def _legend(has_box):
+    cells, style = [], [("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("FONT", (0, 0), (-1, -1), "Helvetica", 7.5),
+                        ("LEFTPADDING", (0, 0), (-1, -1), 3), ("RIGHTPADDING", (0, 0), (-1, -1), 6)]
+    for i, (lab, (strong, _)) in enumerate(DANGER.items()):
+        cells += ["", lab]
+        style.append(("BACKGROUND", (2 * i, 0), (2 * i, 0), colors.HexColor(strong)))
+    note = "Colour: danger at the reference point" + (" · Max: worst cell in the area" if has_box else "") + " · box: today"
+    cells.append(note)
+    t = Table([cells], colWidths=[10, 48] * len(DANGER) + [None], rowHeights=[10], hAlign="LEFT")
+    style.append(("TEXTCOLOR", (-1, 0), (-1, 0), colors.HexColor("#555555")))
+    t.setStyle(TableStyle(style))
+    return t

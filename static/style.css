@@ -7,7 +7,6 @@ header label { display: flex; align-items: center; gap: 6px; }
 header select, header input { font: inherit; padding: 4px 6px; border-radius: 4px; border: 1px solid #5b6670; }
 .btn { background: #e8590c; color: #fff; text-decoration: none; padding: 6px 12px; border-radius: 4px; font-weight: 600; }
 .btn:hover { background: #c94b07; }
-#status { color: #c9d1d8; font-size: 13px; }
 main { position: relative; flex: 1; min-height: 300px; }
 #map { position: absolute; inset: 0; }
 #legend { position: absolute; right: 12px; bottom: 24px; z-index: 500; background: #fff; padding: 8px 10px; border-radius: 6px;
@@ -48,8 +47,7 @@ footer { padding: 6px 14px; font-size: 12px; color: #5b6670; background: #f3f5f7
 /* ---- layout pieces shared by both sizes ---- */
 header { gap: 8px 12px; }
 .area select { max-width: 230px; }
-#controls { display: contents; }
-.about, .short, .gear { display: none; }
+.short, .phone-only { display: none; }
 #legend { cursor: pointer; }
 #legend.collapsed img, #legend.collapsed .sub { display: none; }
 
@@ -65,19 +63,6 @@ header { gap: 8px 12px; }
   .spacer { display: none; }
   .btn { padding: 5px 10px; }
   .chip { padding: 4px 10px; font-size: 14px; }
-  #status { position: fixed; left: 8px; bottom: 30px; z-index: 900; font-size: 12px; color: #fff;
-            background: rgba(29, 35, 41, 0.85); padding: 3px 8px; border-radius: 4px; max-width: 60vw; }
-  #status:empty { display: none; }
-  #controls { display: none; }
-  body.settings-open #controls {
-    display: flex; flex-direction: column; align-items: stretch; gap: 10px;
-    position: fixed; left: 8px; right: 8px; top: var(--hdr, 96px); z-index: 1200;
-    background: #fff; color: #1d2329; border-radius: 8px; padding: 12px 14px; box-shadow: 0 2px 14px rgba(0, 0, 0, 0.35);
-  }
-  body.settings-open #controls label { justify-content: space-between; }
-  body.settings-open #controls input, body.settings-open #controls select { flex: 1; max-width: 70%; }
-  body.settings-open #controls .btn2 { color: #1d2329; border-color: #8a959f; }
-  body.settings-open .about { display: block; font-size: 12px; color: #5b6670; border-top: 1px solid #e3e6e9; padding-top: 8px; }
   .gear.on { background: #2f3840; color: #fff; }
   .chip, .btn { flex: none; white-space: nowrap; }
   #legend { right: 8px; bottom: 18px; padding: 6px 8px; font-size: 12px; max-width: 46vw; }
@@ -88,14 +73,9 @@ header { gap: 8px 12px; }
   header h1 { display: none; }
 }
 @media (min-width: 701px) and (max-width: 1400px) {
-  .chip .long { display: none; }
+  .chip:not(.gear) .long { display: none; }
 }
 .bell.on { border-color: #e8590c; }
-@media (min-width: 701px) and (max-width: 1400px) { .bell .long { display: none; } }
-@media (max-width: 700px) {
-  body.settings-open #controls .long { display: inline !important; }
-  body.settings-open #controls .bell { text-align: left; padding: 8px 12px; }
-}
 
 /* ---- area panel (bottom sheet) ---- */
 #sheet { position: absolute; z-index: 1100; left: 12px; bottom: 12px; width: min(560px, calc(100% - 24px)); height: min(62vh, calc(100% - 24px));
@@ -245,3 +225,38 @@ body.sheet-open #legend { bottom: calc(var(--sheet-h, 0px) + 24px); }
 
 /* reported fires (CWFIS) on the map */
 .rep-fire { color: #ff3b30; font-size: 18px; line-height: 18px; text-align: center; text-shadow: 0 0 2px #000, 0 0 3px #000; }
+
+/* ---- map layers panel (☰ Layers) ---- */
+.gear.on { background: #2f3840; color: #fff; border-color: #8a959f; }
+#controls { display: none; position: absolute; z-index: 1140; top: 12px; right: 12px; width: 300px; max-height: calc(100% - 24px); overflow: auto;
+            background: #fff; color: #1d2329; border-radius: 8px; box-shadow: 0 2px 14px rgba(0, 0, 0, 0.3); padding: 8px 14px 12px; }
+body.settings-open #controls { display: block; }
+#controls .lp-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px; }
+#controls .lp-head b { font-size: 15px; }
+#controls .x { background: none; border: none; font-size: 20px; line-height: 1; cursor: pointer; color: #5b6670; }
+#controls section { border-top: 1px solid #e3e6e9; padding: 8px 0 4px; }
+#controls h3 { margin: 0 0 6px; font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: #5b6670; }
+#controls h3 span { font-weight: 400; text-transform: none; letter-spacing: 0; color: #8a959f; margin-left: 4px; }
+#controls label { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 0 0 6px; font-size: 13.5px; }
+#controls select, #controls input { font: inherit; padding: 4px 6px; border-radius: 4px; border: 1px solid #c3c8cd; width: 150px; max-width: 60%; flex: none; }
+#controls .btn2 { color: #1d2329; border-color: #c3c8cd; width: 100%; text-align: left; padding: 6px 10px; }
+#controls .btn2:hover { background: #f3f5f7; }
+#controls .bell .long { display: inline !important; }
+#controls .about { display: none; font-size: 11.5px; color: #5b6670; border-top: 1px solid #e3e6e9; padding-top: 8px; margin-top: 4px; }
+/* keep the RDPS time bar clear of the panel on mid-width screens */
+@media (min-width: 701px) { body.settings-open #windbar { left: calc(50% - 160px); } }
+
+/* status line: over the map, beside the zoom buttons */
+#status { position: absolute; z-index: 900; top: 12px; left: 56px; max-width: calc(100% - 400px); font-size: 12.5px; color: #fff;
+          background: rgba(29, 35, 41, 0.85); padding: 4px 9px; border-radius: 4px; pointer-events: none; }
+#status:empty { display: none; }
+
+@media (max-width: 700px) {
+  .wide-only { display: none !important; }
+  .phone-only { display: block; }
+  #controls { top: 8px; left: 8px; right: 8px; width: auto; max-height: calc(100% - 16px); }
+  #controls select, #controls input { width: auto; flex: 1; max-width: 62%; }
+  #controls .phone-only { margin: 6px 0 8px; }
+  #controls .about { display: block; }
+  #status { top: auto; bottom: 30px; left: 8px; max-width: 70vw; font-size: 12px; }
+}

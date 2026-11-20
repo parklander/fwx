@@ -15,28 +15,11 @@
 <header>
   <h1><span class="long">Fire Weather Forecast</span><span class="short">Fire Wx</span></h1>
   <label class="area"><span class="lbl">Area</span> <select id="aoi" aria-label="Area"></select></label>
-  <!-- inline on wide screens; on phones this becomes the ⚙ settings panel -->
-  <div id="controls">
-    <button type="button" id="country" class="btn2" title="Show all areas across Canada">All of Canada</button>
-    <label>Date <input type="date" id="date"></label>
-    <label>Layer <select id="layer"></select></label>
-    <label>Basemap <select id="basemap"></select></label>
-    <label title="RDPS 10 m wind for the next 48 hours">Wind <select id="wind">
-      <option value="off">Off</option><option value="particles">Particles</option><option value="arrows">Arrows</option></select></label>
-    <label title="RDPS precipitation for the next 48 hours: hourly rate by type, or snow added up from now">Precip <select id="precip">
-      <option value="off">Off</option><option value="on">Rate by type</option><option value="snow">Snow from now</option></select></label>
-    <label title="Satellite fire detections (NASA FIRMS VIIRS and MODIS): heat signals, not confirmed fires">Hotspots <select id="fires">
-      <option value="off">Off</option><option value="24">Last 24 h</option><option value="48">Last 48 h</option></select></label>
-    <label title="Fires the provincial and territorial agencies are managing now (CWFIS)">Reported fires <select id="repfires">
-      <option value="off">Off</option><option value="on">Current</option></select></label>
-    <button type="button" id="bell" class="btn2 bell" title="Get a notification when ECCC issues a new alert">🔔<span class="long"> Notify me</span></button>
-    <div class="about">Daily grids from the <a href="https://cwfis.cfs.nrcan.gc.ca/" target="_blank" rel="noopener">Canadian Wildland Fire Information System</a> (NRCan), noon local standard time. Alerts, RDPS wind and precipitation and GOES satellite images from Environment and Climate Change Canada. Satellite fire detections from NASA FIRMS (VIIRS and MODIS); reported fires from CWFIS. The PDF covers the day before the selected date through the end of the CWFIS forecast.</div>
-  </div>
+  <button type="button" id="country" class="btn2 wide-only" title="Show all areas across Canada">All of Canada</button>
   <a id="pdf" class="btn" target="_blank" rel="noopener"><span class="long">Forecast </span>PDF ↗</a>
-  <span id="status" role="status"></span>
   <span class="spacer"></span>
   <button type="button" id="alert-chip" class="chip" title="ECCC weather alerts for the areas">Alerts</button>
-  <button type="button" id="gear" class="chip gear" aria-label="Settings" aria-expanded="false">⚙</button>
+  <button type="button" id="gear" class="chip gear" aria-label="Map layers and settings" aria-expanded="false" aria-controls="controls">☰<span class="long"> Layers</span></button>
 </header>
 <main>
   <div id="map"></div>
@@ -68,6 +51,40 @@
     </nav>
     <div id="sh-body"></div>
   </section>
+  <!-- map layers and settings: a panel over the map (open by default on wide screens, behind ☰ on phones) -->
+  <aside id="controls" aria-label="Map layers and settings">
+    <div class="lp-head"><b>Map layers</b><button type="button" class="x" id="lp-close" aria-label="Close">×</button></div>
+    <button type="button" id="country2" class="btn2 phone-only" title="Show all areas across Canada">All of Canada</button>
+    <section>
+      <h3>Fire weather <span>CWFIS daily, noon LST</span></h3>
+      <label>Layer <select id="layer"></select></label>
+      <label>Date <input type="date" id="date"></label>
+    </section>
+    <section>
+      <h3>Forecast overlays <span>RDPS, next 48 h</span></h3>
+      <label title="RDPS 10 m wind for the next 48 hours">Wind <select id="wind">
+        <option value="off">Off</option><option value="particles">Particles</option><option value="arrows">Arrows</option></select></label>
+      <label title="RDPS precipitation for the next 48 hours: hourly rate by type, or snow added up from now">Precip <select id="precip">
+        <option value="off">Off</option><option value="on">Rate by type</option><option value="snow">Snow from now</option></select></label>
+    </section>
+    <section>
+      <h3>Fires</h3>
+      <label title="Satellite fire detections (NASA FIRMS VIIRS and MODIS): heat signals, not confirmed fires">Satellite hotspots <select id="fires">
+        <option value="off">Off</option><option value="24">Last 24 h</option><option value="48">Last 48 h</option></select></label>
+      <label title="Fires the provincial and territorial agencies are managing now (CWFIS)">Reported fires <select id="repfires">
+        <option value="off">Off</option><option value="on">Current</option></select></label>
+    </section>
+    <section>
+      <h3>Map</h3>
+      <label>Basemap <select id="basemap"></select></label>
+    </section>
+    <section>
+      <h3>Alerts</h3>
+      <button type="button" id="bell" class="btn2 bell" title="Get a notification when ECCC issues a new alert">🔔<span class="long"> Notify me</span></button>
+    </section>
+    <div class="about">Daily grids from the <a href="https://cwfis.cfs.nrcan.gc.ca/" target="_blank" rel="noopener">Canadian Wildland Fire Information System</a> (NRCan), noon local standard time. Alerts, RDPS wind and precipitation and GOES satellite images from Environment and Climate Change Canada. Satellite fire detections from NASA FIRMS (VIIRS and MODIS); reported fires from CWFIS. The PDF covers the day before the selected date through the end of the CWFIS forecast.</div>
+  </aside>
+  <span id="status" role="status"></span>
   <aside id="alerts" class="panel" hidden></aside>
   <aside id="notify" class="panel" hidden></aside>
   <aside id="legend" hidden title="Tap to show or hide the legend">

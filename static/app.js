@@ -352,7 +352,14 @@
     try { ALERTS = await (await fetch("/api/alerts")).json(); } catch (_) { return; }
     renderAlerts();
   }
-  $("alert-chip").onclick = () => { alertsOpen = !alertsOpen; $("notify").hidden = true; closeSettings(); renderAlerts(); };
+  $("alert-chip").onclick = () => {
+    alertsOpen = !alertsOpen; $("notify").hidden = true; closeSettings(); renderAlerts();
+    // wide screens: the layers panel comes back when the alerts close, if it was left open
+    if (!alertsOpen && !window.matchMedia("(max-width: 700px)").matches) {
+      let o = null; try { o = localStorage.getItem("fwx-layers-open"); } catch (_) {}
+      if (o !== "0") setSettings(true);
+    }
+  };
   const aoiChange = $("aoi").onchange;
   $("aoi").onchange = () => { aoiChange(); renderAlerts(); };
   setInterval(loadAlerts, 2 * 60e3);
@@ -759,8 +766,8 @@
   map.on("moveend", () => { if ($("fires").value !== "off") { clearTimeout(hotMove); hotMove = setTimeout(() => loadHotspots(false), 400); } });
   $("fires").value = ["24", "48"].includes(prefs.fires) ? prefs.fires : "off";
   $("repfires").value = prefs.repfires === "on" ? "on" : "off";
-  $("fires").onchange = () => { save(); loadHotspots(true); };
-  $("repfires").onchange = () => { save(); loadReported(); };
+  $("fires").onchange = () => { save(); loadHotspots(true); if (window.matchMedia("(max-width: 700px)").matches) closeSettings(); };
+  $("repfires").onchange = () => { save(); loadReported(); if (window.matchMedia("(max-width: 700px)").matches) closeSettings(); };
   setInterval(() => { if ($("fires").value !== "off") loadHotspots(true); }, 15 * 60e3);
   setInterval(() => { if ($("repfires").value !== "off") loadReported(); }, 30 * 60e3);
   loadHotspots(true); loadReported();
@@ -779,21 +786,23 @@
   };
   $("wind").onchange = $("precip").onchange = () => { save(); showRdps(); if (phone.matches) closeSettings(); };
 
-  // ---- phones: ⚙ opens Date, Layer and All of Canada; the legend collapses on tap ------------------
+  // ---- ☰ Layers: the map layers panel. Wide screens: open by default and remembered; phones: closes after a pick ----
   const phone = window.matchMedia("(max-width: 700px)");
-  function closeSettings() { document.body.classList.remove("settings-open"); $("gear").classList.remove("on"); $("gear").setAttribute("aria-expanded", "false"); }
-  $("gear").onclick = () => {
-    const open = !document.body.classList.contains("settings-open");
-    if (open) {
-      document.documentElement.style.setProperty("--hdr", `${document.querySelector("header").getBoundingClientRect().bottom + 6}px`);
-      alertsOpen = false; $("alerts").hidden = true; $("notify").hidden = true;
-    }
+  const remember = (open) => { if (!phone.matches) try { localStorage.setItem("fwx-layers-open", open ? "1" : "0"); } catch (_) {} };
+  function setSettings(open) {
+    if (open) { alertsOpen = false; $("alerts").hidden = true; $("notify").hidden = true; }
     document.body.classList.toggle("settings-open", open);
     $("gear").classList.toggle("on", open);
     $("gear").setAttribute("aria-expanded", String(open));
-  };
-  map.on("click", closeSettings);
-  $("country").addEventListener("click", () => { if (phone.matches) closeSettings(); });
+  }
+  function closeSettings() { setSettings(false); }
+  $("gear").onclick = () => { const open = !document.body.classList.contains("settings-open"); setSettings(open); remember(open); };
+  $("lp-close").onclick = () => { closeSettings(); remember(false); };
+  map.on("click", () => { if (phone.matches) closeSettings(); });
+  $("country2").onclick = () => { closeSettings(); $("country").click(); };
+  let lpOpen = null;
+  try { lpOpen = localStorage.getItem("fwx-layers-open"); } catch (_) {}
+  if (!phone.matches && lpOpen !== "0") setSettings(true);
   $("legend").onclick = () => $("legend").classList.toggle("collapsed");
   if (phone.matches) $("legend").classList.add("collapsed");
   // the header's height changes with the window; keep the map filling the rest

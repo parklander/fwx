@@ -2,7 +2,7 @@
    Forecast     – Open-Meteo (ECCC GEM) hourly strip and 7-day outlook
    Fire weather – stacked hourly meteograms with one shared crosshair and readout
    FWI 3 days   – CWFIS daily FWI System values for today, tomorrow and the next day
-   Rx           – each forecast hour checked against prescribed burn limits: GO / CAUTION / NO-GO
+   Burn windows – each forecast hour checked against prescribed burn limits: within / near / outside limits
    Listens for the "area-selected" event from app.js. */
 (function () {
   "use strict";
@@ -73,6 +73,49 @@
     if (sheet.classList.contains("min")) setMin(false); else render();
   }));
 
+  // ---- where the numbers come from and how fresh they are, under the tabs ----------------------------
+  const STALE_MIN = 90;  // older than this and the panel says so in red
+  function tzAbbr(tz) {
+    try { return new Intl.DateTimeFormat("en-CA", { timeZone: tz, timeZoneName: "short" }).formatToParts(new Date()).find((x) => x.type === "timeZoneName").value; }
+    catch (_) { return tz; }
+  }
+  function provenance() {
+    const el = $("sh-prov");
+    if (!DATA) { el.textContent = ""; el.className = "prov"; return; }
+    const tz = DATA.weather?.timezone, fetched = new Date(DATA.fetched);
+    const ageMin = (Date.now() - fetched) / 60e3;
+    const at = fetched.toLocaleTimeString("en-CA", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: tz || undefined });
+    const problems = Object.values(DATA.errors || {});
+    if (DATA.refreshFailed) problems.push("refresh failed; showing the last good data");
+    const stale = ageMin > STALE_MIN || problems.length > 0;
+    const parts = [`Forecast fetched ${at}${tz ? ` ${tzAbbr(tz)}` : ""}${ageMin > 60 ? ` (${Math.round(ageMin / 60)} h ago)` : ""}`];
+    if (DATA.cwfis_last) parts.push(`CWFIS daily to ${dayLong(DATA.cwfis_last)}`);
+    if (tz) parts.push(`times are ${tzAbbr(tz)}`);
+    el.className = "prov" + (stale ? " stale" : "");
+    el.innerHTML = (stale ? `<b>⚠ ${ageMin > STALE_MIN ? "Out of date" : "Incomplete"}</b> · ` : "") + esc(parts.join(" · "))
+      + (problems.length ? ` · ${esc(problems.join("; "))}` : "");
+  }
+  async function load(id, quiet) {
+    try {
+      const r = await fetch(`/api/area/${encodeURIComponent(id)}`, { cache: "no-store" });
+      if (!r.ok) throw new Error(r.status);
+      const d = await r.json();
+      if (areaId !== id) return;  // a newer pick arrived while this one loaded
+      DATA = d;
+    } catch (err) {
+      if (areaId !== id) return;
+      if (quiet && DATA) { DATA.refreshFailed = true; provenance(); return; }
+      $("sh-body").innerHTML = `<p class="sub pad">Couldn't load the forecast. Try again in a minute.</p>`;
+      return;
+    }
+    const y = $("sh-body").scrollTop;
+    render();
+    if (quiet) $("sh-body").scrollTop = y;
+  }
+  // keep an open panel current: refetch every 30 min, and the age line ticks over every minute
+  setInterval(() => { if (!sheet.hidden && areaId) load(areaId, true); }, 30 * 60e3);
+  setInterval(provenance, 60e3);
+
   document.addEventListener("area-selected", async (e) => {
     const { id, name } = e.detail;
     areaId = id;
@@ -82,17 +125,9 @@
     sheet.classList.remove("min");
     setOpen(true);
     DATA = null;
+    provenance();
     $("sh-body").innerHTML = `<p class="sub pad">Loading forecast…</p>`;
-    try {
-      const r = await fetch(`/api/area/${encodeURIComponent(id)}`);
-      const d = await r.json();
-      if (areaId !== id) return;  // a newer pick arrived while this one loaded
-      DATA = d;
-    } catch (err) {
-      if (areaId === id) $("sh-body").innerHTML = `<p class="sub pad">Couldn't load the forecast. Try again in a minute.</p>`;
-      return;
-    }
-    render();
+    await load(id, false);
   });
 
   function render() {
@@ -100,6 +135,7 @@
     charts.forEach((c) => c.destroy());
     charts = [];
     document.documentElement.style.setProperty("--sheet-h", `${sheet.getBoundingClientRect().height}px`);
+    provenance();
     if (!DATA) return;
     const w = DATA.weather;
     if (w?.daily?.length) {
@@ -147,23 +183,26 @@
       <td class="ic" title="${esc(wmo(d.code)[1])}">${wmo(d.code)[0]}</td>
       <td><b>${r0(d.tmax)}°</b> <span class="s">${r0(d.tmin)}°</span></td>
       <td>${d.precip > 0 ? `${r1(d.precip)}<span class="s"> mm</span>` : `<span class="s">–</span>`}</td>
-      <td>${arrow(d.wd)} ${r0(d.ws_max)}${d.gust_max != null ? `<span class="s"> g${r0(d.gust_max)}</span>` : ""}</td>
+      <td>${arrow(d.wd)} ${r0(d.ws_max)}${d.gust_max != null ? `<span class="s">, gusts ${r0(d.gust_max)}</span>` : ""}</td>
       <td>${r0(d.rh_min)}<span class="s">%</span></td>
       <td>${d.fwi_peak != null ? `<b>${r0(d.fwi_peak)}</b>` : "–"}</td></tr>`).join("");
-    return `<div class="hours" aria-label="Next 24 hours">${cells.join("")}</div>
-      <table class="days"><thead><tr><th>Day</th><th></th><th>High / low</th><th>Rain</th><th>Wind km/h</th><th>Min RH</th><th title="Highest hourly FWI, computed from this forecast">Peak FWI</th></tr></thead>
+    return `<div class="units">Next 24 h · temperature °C · wind km/h · precipitation mm</div>
+      <div class="hours" aria-label="Next 24 hours">${cells.join("")}</div>
+      <table class="days"><thead><tr><th>Day</th><th></th><th>High / low °C</th><th title="Total for the day, water equivalent: snow counted as melted water">Precip mm</th><th>Wind km/h</th><th>Min RH</th><th title="Highest hourly FWI calculated by FWX from this forecast; not an official CWFIS value">Peak FWI <span class="calc">calc.</span></th></tr></thead>
       <tbody>${rows}</tbody></table>
-      <p class="note">${esc(w.model)}. Wind arrows point the way the wind blows; g = gusts. Peak FWI is the highest hourly FWI computed from this forecast (see Fire weather). Times are local to the area.</p>`;
+      <p class="note">${esc(w.model)}. Wind arrows point the way the wind blows. Precipitation is water equivalent: snow is counted as melted water (about 1 mm per cm of fresh snow).
+      Peak FWI is calculated by FWX from this forecast (see Fire weather), not an official CWFIS value.</p>`;
   }
 
   // ---- tab 2: fire weather meteograms ---------------------------------------------------------------
   function fireTab() {
     if (!DATA.weather) return err("weather");
-    return `<div class="rng">${[[48, "48 h"], [72, "3 days"], [168, "7 days"]].map(([v, l]) =>
+    return `<div class="ident calc">Calculated hourly by FWX from the ${esc(DATA.weather.model)} forecast · not an official CWFIS product</div>
+      <div class="rng">${[[48, "48 h"], [72, "3 days"], [168, "7 days"]].map(([v, l]) =>
       `<button data-range="${v}" class="${range === v ? "on" : ""}">${l}</button>`).join("")}</div>
       <div class="readout" id="readout"></div>
       ${[["c-temp", "Temperature °C"], ["c-rh", "Relative humidity %"], ["c-wind", 'Wind km/h <span class="key"><i style="background:#2a78d6"></i>speed <i style="background:#eb6834"></i>gusts</span>'],
-         ["c-rain", "Rain mm/h"], ["c-ffmc", "FFMC (hourly)"], ["c-fwi", "FWI (hourly)"]].map(([id, t]) =>
+         ["c-rain", "Precipitation mm/h (water equivalent)"], ["c-ffmc", 'FFMC, hourly <span class="calc">calc.</span>'], ["c-fwi", 'FWI, hourly <span class="calc">calc.</span>']].map(([id, t]) =>
         `<div class="cbox"><div class="ct">${t}</div><div class="cw"><canvas id="${id}"></canvas></div></div>`).join("")}
       <p class="note">Hourly weather: ${esc(DATA.weather.model)}. Hourly FFMC, ISI and FWI are calculated here: they start from CWFIS's
       daily FFMC at noon${DATA.weather.fire_start ? ` (${esc(dayLong(DATA.weather.fire_start))})` : ""} and step hour by hour through this forecast,
@@ -242,8 +281,8 @@
       const v = (k, f = r0) => f(h[k][i]);
       $("readout").innerHTML = `<b>${dayName(t)} ${t.slice(11, 16)}</b>
         <span>${wmo(h.code[i])[0]} ${v("temp")}°C</span><span>RH ${v("rh")}%</span>
-        <span>${arrow(h.wd[i])} ${compass(h.wd[i])} ${v("ws")}${h.gust[i] != null ? ` g${v("gust")}` : ""} km/h</span>
-        <span>${h.precip[i] > 0 ? `${v("precip", r1)} mm` : "no rain"}</span>
+        <span>${arrow(h.wd[i])} ${compass(h.wd[i])} ${v("ws")} km/h${h.gust[i] != null ? `, gusts ${v("gust")}` : ""}</span>
+        <span>${h.precip[i] > 0 ? `precip ${v("precip", r1)} mm` : "no precip"}</span>
         <span>FFMC ${v("ffmc", r1)}</span><span>ISI ${v("isi", r1)}</span><span><b>FWI ${v("fwi", r1)}</b></span>`;
     }
     refresh();
@@ -262,12 +301,13 @@
         <div class="badge" style="background:${col};color:${DARK_TEXT.has(lab) ? "#1d2329" : "#fff"}">${esc(lab)}</div>
         <div class="big">${r1(r.fwi)}<span>FWI</span></div>
         ${hasBox && r.fwi_max != null ? `<div class="s">Area max ${r1(r.fwi_max)}${r.fdr_max_label && r.fdr_max_label !== lab ? ` · ${esc(r.fdr_max_label)}` : ""}</div>` : ""}
-        ${peak[r.date] != null ? `<div class="s" title="Highest hourly FWI computed from the Open-Meteo forecast">Hourly peak ≈ ${r0(peak[r.date])}</div>` : ""}
+        ${peak[r.date] != null ? `<div class="s" title="Highest hourly FWI calculated by FWX from the forecast; not a CWFIS value">Hourly peak ≈ ${r0(peak[r.date])} <span class="calc">calc.</span></div>` : ""}
         <dl><dt>ISI</dt><dd>${r1(r.isi)}</dd><dt>BUI</dt><dd>${r0(r.bui)}</dd><dt>FFMC</dt><dd>${r1(r.ffmc)}</dd>
             <dt>DMC</dt><dd>${r0(r.dmc)}</dd><dt>DC</dt><dd>${r0(r.dc)}</dd></dl>
-        <div class="wx">${r0(r.temp)}°C · RH ${r0(r.rh)}%<br>${compass(r.wdir)} ${r0(r.ws)} km/h${r.precip ? ` · ${r1(r.precip)} mm` : ""}</div></div>`;
+        <div class="wx">${r0(r.temp)}°C · RH ${r0(r.rh)}%<br>${compass(r.wdir)} ${r0(r.ws)} km/h${r.precip ? ` · precip ${r1(r.precip)} mm` : ""}</div></div>`;
     }).join("");
-    return `<div class="fwis">${cards}</div>
+    return `<div class="ident official">Official CWFIS daily values · noon local standard time</div>
+      <div class="fwis">${cards}</div>
       <p class="note">CWFIS daily values at noon local standard time, at the area's reference point${hasBox ? "; area max is the worst 2 km cell in the area's box" : ""}.
       The forecast PDF has the full run of days.</p>`;
   }
@@ -308,7 +348,7 @@
     { k: "wdir", label: "Wind direction", unit: "°", m: 15, get: (i, h) => h.wd[i], f: (v) => `${compass(v)} ${r0(v)}°`,
       test: (v, c, m) => (!inDir(v, c.from, c.to) ? "out" : Math.min(angDist(v, c.from), angDist(v, c.to)) < m ? "near" : "ok"),
       limit: (c) => `${c.from}° to ${c.to}° (${compass(c.from)} to ${compass(c.to)})` },
-    { k: "rain", label: "Rain in the hour", unit: "mm", m: 0, get: (i, h) => h.precip[i], f: r1,
+    { k: "rain", label: "Precipitation in the hour", unit: "mm", m: 0, get: (i, h) => h.precip[i], f: r1,
       test: (v, c) => (v > c.max ? "out" : "ok"), limit: (c) => (c.max ? `≤ ${c.max} mm` : "none") },
     { k: "ffmc", label: "FFMC", unit: "", m: 1, hourly: "model", get: (i, h) => h.ffmc[i], f: r1,
       test: (v, c, m) => band(v, c.min, c.max, m), limit: (c) => `${c.min} to ${c.max}` },
@@ -323,7 +363,8 @@
     { k: "bui", label: "BUI", unit: "", m: 3, daily: true, get: (i, h, d) => d?.bui, f: r0,
       test: (v, c, m) => (v >= c.max ? "out" : v > c.max - m ? "near" : "ok"), limit: (c) => `< ${c.max}` },
   ];
-  const ST = { go: ["GO", "#2f9e44"], caution: ["CAUTION", "#f2c200"], nogo: ["NO-GO", "#d6336c"], unk: ["No data", "#c3c8cd"] };
+  // results are stated against the limits checked, not as a go/no-go call
+  const ST = { go: ["Within limits", "#2f9e44"], caution: ["Near limits", "#f2c200"], nogo: ["Outside limits", "#d6336c"], unk: ["No data", "#c3c8cd"] };
   const RX_FIRST = 6, RX_LAST = 21;  // hours assessed each day (ignition period is inside this)
 
   const rxKey = () => `fwx-rx:${areaId}`;
@@ -395,21 +436,25 @@
         <div class="rxd"><b>${d === today ? "Today" : dayName(d)}</b><span class="s">${MON[dayOf(d).getMonth()]} ${dayOf(d).getDate()}</span></div>
         <div class="rxbar">${cells.join("")}</div>
         <div class="rxv"><span class="tag" style="background:${ST[verdict][1]}">${verdict === "unk" ? "?" : ST[verdict][0]}</span></div>
-        <div class="rxs">${go ? `<b>${go}</b> of ${evals.length} ignition hours GO: ${windowsOf(evals)}` : cau ? `No GO hours; ${cau} caution` : verdict === "unk" ? "Not enough forecast data" : "No ignition hour within limits"}${lim.length ? ` · <span class="lim">Limiting: ${esc(lim.join(", "))}</span>` : ""}</div>
+        <div class="rxs">${go ? `<b>${go}</b> of ${evals.length} ignition hours within limits: ${windowsOf(evals)}` : cau ? `No ignition hour fully within limits; ${cau} near limits` : verdict === "unk" ? "Not enough forecast data" : "No ignition hour within limits"}${lim.length ? ` · <span class="lim">Limiting: ${esc(lim.join(", "))}</span>` : ""}</div>
       </div>`;
     }).join("");
     const ticks = [0, 6, 12, 18].map((x) => `<span style="left:${(x / 24) * 100}%">${hh(x)}</span>`).join("");
+    // the ignition period drawn as a labelled bracket over the hour columns, start to end inclusive
+    const L = (c.start / 24) * 100, W = ((c.end - c.start + 1) / 24) * 100;
+    const ign = `<div class="ignlab" style="left:${L + W / 2}%">Ignition ${hh(c.start)}–${hh(c.end)}</div><div class="ignband" style="left:${L}%;width:${W}%"></div>`;
     return `<div class="rng">${[[3, "3 days"], [7, "7 days"]].map(([v, l]) => `<button data-rxrange="${v}" class="${rxRange === v ? "on" : ""}">${l}</button>`).join("")}
         <span class="rxkey">${["go", "caution", "nogo", "unk"].map((k) => `<i style="background:${ST[k][1]}"></i>${ST[k][0]}`).join("")}</span></div>
       <div class="readout rxread" id="rx-read">${rxReadout()}</div>
-      <div class="rxgrid"><div class="rxrow rxhead"><div></div><div class="rxticks">${ticks}</div></div>${rows}</div>
+      <div class="rxgrid"><div class="rxrow rxhead"><div></div><div class="rxticks">${ticks}</div></div>
+        <div class="rxrow rxhead"><div></div><div class="rxign">${ign}</div></div>${rows}</div>
       <button type="button" class="rxedit-t" id="rx-edit-t" aria-expanded="${rxEdit}">${rxEdit ? "▾" : "▸"} Prescription limits</button>
-      ${rxEdit ? rxEditor() : `<p class="rxlims">${esc(RX_ROWS.filter((r) => c[r.k].on).map((r) => `${r.label} ${r.limit(c[r.k])}`).join(" · "))} · ignition ${hh(c.start)}–${hh(c.end)}</p>`}
-      <p class="note">Each hour from ${hh(RX_FIRST)} to ${hh(RX_LAST)} is checked against every enabled limit; outlined cells are the ignition period.
-      <b>GO</b>: within all of them. <b>CAUTION</b>: within all, but close to at least one (inside the margin in the limits table). <b>NO-GO</b>: outside at least one.
+      ${rxEdit ? rxEditor() : `<p class="rxlims"><b>Ignition ${hh(c.start)}–${hh(c.end)}</b> · ${esc(RX_ROWS.filter((r) => c[r.k].on).map((r) => `${r.label} ${r.limit(c[r.k])}`).join(" · "))}</p>`}
+      <p class="note">Each hour from ${hh(RX_FIRST)} to ${hh(RX_LAST)} is checked against every enabled limit. The bracket and the outlined cells mark the ignition period.
+      <b>Within limits</b>: inside every limit checked. <b>Near limits</b>: inside all, but within the margin of at least one. <b>Outside limits</b>: outside at least one. Default limits follow CFFM recommendations and can be changed.
       Grey: some value isn't forecast (hourly FFMC, ISI and FWI start from CWFIS's latest noon; DMC, DC and BUI only go as far as the CWFIS forecast).
       Weather is ${esc(w.model)}; FFMC, ISI and FWI are the hourly values from the Fire weather tab. Atmospheric stability, ventilation and air quality aren't checked here.
-      Limits are saved in this browser for this area. A planning aid: the burn boss's go/no-go call stands on observed weather.</p>`;
+      Limits are saved in this browser for this area. A planning aid only: the burn boss's go/no-go call stands on observed weather.</p>`;
   }
 
   function rxReadout() {
@@ -438,7 +483,7 @@
     return `<div class="rxed">
       <p>Ignition period ${num("start", "", c.start)} to ${num("end", "", c.end)} h
         <button type="button" id="rx-reset" class="lnk">Reset to defaults</button></p>
-      <table><thead><tr><th>Parameter</th><th>Limit</th><th title="CAUTION when within this much of a limit">Caution</th><th>Checked</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+      <table><thead><tr><th>Parameter</th><th>Limit</th><th title="Near limits when within this much of a limit">Margin</th><th>Checked</th></tr></thead><tbody>${rows}</tbody></table></div>`;
   }
 
   function wireRx() {

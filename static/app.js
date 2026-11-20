@@ -399,11 +399,6 @@
   }
   $("alert-chip").onclick = () => {
     alertsOpen = !alertsOpen; $("notify").hidden = true; closeSettings(); renderAlerts();
-    // wide screens: the layers panel comes back when the alerts close, if it was left open
-    if (!alertsOpen && !window.matchMedia("(max-width: 700px)").matches) {
-      let o = null; try { o = localStorage.getItem("fwx-layers-open"); } catch (_) {}
-      if (o !== "0") setSettings(true);
-    }
   };
   const aoiChange = $("aoi").onchange;
   $("aoi").onchange = () => { aoiChange(); renderAlerts(); };
@@ -833,7 +828,7 @@
 
   // ---- ☰ Layers: the map layers panel. Wide screens: open by default and remembered; phones: closes after a pick ----
   const phone = window.matchMedia("(max-width: 700px)");
-  const remember = (open) => { if (!phone.matches) try { localStorage.setItem("fwx-layers-open", open ? "1" : "0"); } catch (_) {} };
+  const remember = () => {};
   function setSettings(open) {
     if (open) { alertsOpen = false; $("alerts").hidden = true; $("notify").hidden = true; }
     document.body.classList.toggle("settings-open", open);
@@ -845,9 +840,7 @@
   $("lp-close").onclick = () => { closeSettings(); remember(false); };
   map.on("click", () => { if (phone.matches) closeSettings(); });
   $("country2").onclick = () => { closeSettings(); $("country").click(); };
-  let lpOpen = null;
-  try { lpOpen = localStorage.getItem("fwx-layers-open"); } catch (_) {}
-  if (!phone.matches && lpOpen !== "0") setSettings(true);
+  // the Layers panel starts closed so the map and the forecast panel have the room; ☰ Layers opens it
   $("legend").onclick = () => $("legend").classList.toggle("collapsed");
   if (phone.matches) $("legend").classList.add("collapsed");
   // the header's height changes with the window; keep the map filling the rest

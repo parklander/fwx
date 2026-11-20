@@ -152,7 +152,8 @@ async def forecast_pdf(aoi: str, start: str | None = Query(None, pattern=r"^\d{4
 
 def _area_panel(area):
     t = today()
-    out = {"area": area, "today": t.isoformat(), "fwi_days": [], "weather": None, "errors": {}}
+    out = {"area": area, "today": t.isoformat(), "fwi_days": [], "weather": None, "errors": {},
+           "fetched": datetime.now(TZ).isoformat(timespec="seconds"), "cwfis_last": None}
     rows = []
     try:
         first, last = _period((t - timedelta(days=1)).isoformat())
@@ -160,6 +161,8 @@ def _area_panel(area):
         out["fwi_days"] = [r for r in rows if t.isoformat() <= r["date"] <= (t + timedelta(days=2)).isoformat()]
         # daily codes for the Rx tab's prescription check, every day CWFIS has
         out["daily_codes"] = [{k: r.get(k) for k in ("date", "dmc", "dc", "bui")} for r in rows]
+        have = [r["date"] for r in rows if r.get("fwi") is not None]
+        out["cwfis_last"] = max(have) if have else None
     except Exception as e:
         log.warning("CWFIS for %s: %s", area["id"], e)
         out["errors"]["cwfis"] = "CWFIS isn't answering right now"

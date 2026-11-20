@@ -6,7 +6,7 @@
   const iso = (d) => d.toISOString().slice(0, 10);
   const today = iso(new Date(Date.now() - new Date().getTimezoneOffset() * 60000));
   const prefs = (() => { try { return JSON.parse(localStorage.getItem("cwfis-prefs") || "{}"); } catch (_) { return {}; } })();
-  const save = () => { try { localStorage.setItem("cwfis-prefs", JSON.stringify({ aoi: $("aoi").value, layer: $("layer").value, wind: $("wind").value, precip: $("precip").value, basemap: $("basemap").value })); } catch (_) {} };
+  const save = () => { try { localStorage.setItem("cwfis-prefs", JSON.stringify({ aoi: $("aoi").value, layer: $("layer").value, wind: $("wind").value, precip: $("precip").value, basemap: $("basemap").value, fires: $("fires").value })); } catch (_) {} };
 
   const map = L.map("map", { zoomControl: true }).setView([55, -97], 4);
 
@@ -692,6 +692,52 @@
   $("wb-next").onclick = () => { stopPlay(); step(1); };
   $("wb-hour").oninput = () => { stopPlay(); showRdps(); };
   $("wb-close").onclick = () => { $("wind").value = "off"; $("precip").value = "off"; save(); showRdps(); };
+  // ---- fire detections: FIRMS hotspots coloured by age, CWFIS reported fires as triangles ---------------
+  map.createPane("fires");
+  map.getPane("fires").style.zIndex = 450;
+  const fireCanvas = L.canvas({ pane: "fires", padding: 0.3 });
+  const fireLayer = L.layerGroup();
+  const FIRE_AGE = [[6, "#ff2d2d", "under 6 h"], [24, "#ff9800", "6–24 h"], [48, "#ffd54f", "24–48 h"]];
+  const fireColor = (hrs) => (FIRE_AGE.find(([h]) => hrs < h) || FIRE_AGE[2])[1];
+  const ago = (t) => { const m = (Date.now() - new Date(t)) / 60e3; return m < 90 ? `${Math.round(m)} min ago` : `${Math.round(m / 60)} h ago`; };
+  const fireT = (t) => new Date(t).toLocaleString("en-CA", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
+  const escF = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+  let fireTimer = null, fireReq = 0;
+  async function loadFires() {
+    const hrs = $("fires").value;
+    if (hrs === "off") { map.removeLayer(fireLayer); fireLayer.clearLayers(); return; }
+    if (!map.hasLayer(fireLayer)) fireLayer.addTo(map);
+    const b = map.getBounds().pad(0.3), my = ++fireReq;
+    const box = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].map((v) => v.toFixed(3)).join(",");
+    let j;
+    try { j = await (await fetch(`/api/fires?hours=${hrs}&bbox=${box}`)).json(); } catch (_) { status("Fire detections are unavailable right now."); return; }
+    if (my !== fireReq || $("fires").value === "off") return;
+    fireLayer.clearLayers();
+    const now = Date.now();
+    for (const f of j.features) {
+      const [lon, lat] = f.geometry.coordinates, p = f.properties;
+      if (p.kind === "hotspot") {
+        const hrsOld = (now - new Date(p.time)) / 36e5;
+        L.circleMarker([lat, lon], { renderer: fireCanvas, radius: 4, weight: 1, color: "#3a0000", fillColor: fireColor(hrsOld), fillOpacity: 0.95 })
+          .bindPopup(`<b>Satellite hotspot</b><br>${escF(fireT(p.time))} (${ago(p.time)})<br>${escF(p.sat)}${p.conf ? ` · ${escF(p.conf)} confidence` : ""}${p.frp != null ? `<br>Fire radiative power ${p.frp} MW` : ""}${p.day ? "" : " · night pass"}<br><span class="sub">A heat signal, not a confirmed fire. Source: NASA FIRMS.</span>`)
+          .addTo(fireLayer);
+      } else {
+        L.marker([lat, lon], { pane: "fires", icon: L.divIcon({ className: "rep-fire", html: "▲", iconSize: [18, 18], iconAnchor: [9, 11] }) })
+          .bindPopup(`<b>${escF(p.name)}</b>${p.agency ? ` (${escF(p.agency)})` : ""}<br>${p.stage ? escF(p.stage) : "Stage not given"}${p.ha != null ? ` · ${p.ha} ha` : ""}${p.start ? `<br>Started ${escF(String(p.start).slice(0, 10))}` : ""}<br><span class="sub">Reported by the fire agency. Source: CWFIS.</span>`)
+          .addTo(fireLayer);
+      }
+    }
+    const st = j.status || {}, n = j.features.filter((f) => f.properties.kind === "hotspot").length;
+    const firmsNote = !st.firms?.enabled ? "FIRMS key not set on the server" : st.firms.error ? st.firms.error : `${n} hotspots in view`;
+    status(`Fires: ${firmsNote} · ● <6 h ● 6–24 h ● 24–48 h · ▲ reported`);
+  }
+  let fireMove = null;
+  map.on("moveend", () => { if ($("fires").value !== "off") { clearTimeout(fireMove); fireMove = setTimeout(loadFires, 400); } });
+  $("fires").value = ["24", "48"].includes(prefs.fires) ? prefs.fires : "off";
+  $("fires").onchange = () => { save(); if ($("fires").value === "off") status(""); loadFires(); };
+  clearInterval(fireTimer); fireTimer = setInterval(() => { if ($("fires").value !== "off") loadFires(); }, 15 * 60e3);
+  loadFires();
+
   $("wind").value = ["particles", "arrows"].includes(prefs.wind) ? prefs.wind : "off";
   $("precip").value = ["on", "snow"].includes(prefs.precip) ? prefs.precip : "off";
   $("basemap").onchange = () => {

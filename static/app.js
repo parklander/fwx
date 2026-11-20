@@ -126,7 +126,13 @@
     }
   }
   map.on("zoomend moveend", declutter);
-  function showArea(fly) {
+  // room taken on the right by the Layers panel (wide screens), so a fitted area isn't hidden under it
+  const panelRight = () => {
+    const c = $("controls");
+    return document.body.classList.contains("settings-open") && c && !window.matchMedia("(max-width: 700px)").matches
+      ? c.getBoundingClientRect().width + 12 : 0;
+  };
+  function showArea(fly, close) {
     const id = $("aoi").value, a = byId[id];
     for (const [k, g] of Object.entries(shapes)) {
       const on = k === id;
@@ -142,7 +148,8 @@
       const pad = window.fwxSheet?.padding() || { left: 0, bottom: 0 };
       const box = a.bbox ? L.latLngBounds([[a.bbox[1], a.bbox[0]], [a.bbox[3], a.bbox[2]]])
                          : L.latLng(a.lat, a.lon).toBounds(20000);
-      map.fitBounds(box.pad(a.bbox ? 1.5 : 0), { maxZoom: 10, paddingTopLeft: [pad.left + 10, 10], paddingBottomRight: [10, pad.bottom + 10] });
+      // close: the base on opening the page, filling most of the map; otherwise with some country around it
+      map.fitBounds(box.pad(a.bbox ? (close ? 0.15 : 1.5) : 0), { maxZoom: close ? 12 : 10, paddingTopLeft: [pad.left + 10, 10], paddingBottomRight: [panelRight() + 10, pad.bottom + 10] });
     }
   }
   // tell the forecast panel which area was picked
@@ -846,8 +853,8 @@
   // the header's height changes with the window; keep the map filling the rest
   window.addEventListener("resize", () => map.invalidateSize());
 
-  showCountry();
-  showArea(false);
+  // open on the user's area (their base, or the last one they looked at), close in; all of Canada if none yet
+  if ($("aoi").value) showArea(true, true); else { showCountry(); showArea(false); }
   showLayer();
   updatePdfLink();
   loadAlerts();

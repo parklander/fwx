@@ -854,7 +854,8 @@
   window.addEventListener("resize", () => map.invalidateSize());
 
   // open on the user's area (their base, or the last one they looked at), close in; all of Canada if none yet
-  if ($("aoi").value) showArea(true, true); else { showCountry(); showArea(false); }
+  // with its forecast panel open (opened first, so the zoom keeps the area clear of it)
+  if ($("aoi").value) { openPanel(); showArea(true, true); } else { showCountry(); showArea(false); }
   showLayer();
   updatePdfLink();
   loadAlerts();

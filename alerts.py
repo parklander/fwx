@@ -93,6 +93,11 @@ class Alerts:
         self.aoi_file, self.state_file, self.on_new = Path(aoi_file), Path(state_file), on_new
         self.lock = threading.Lock()
         self.by_area = {}
+        self.seen_file = self.state_file.with_name("alerts_first_seen.json")
+        try:  # "area|name" -> when this server first saw the alert in effect (kept across restarts)
+            self.first_seen = json.loads(self.seen_file.read_text())
+        except Exception:
+            self.first_seen = {}
         self.missing = {}
         try:
             self.known = set(json.loads(self.state_file.read_text()))
@@ -151,7 +156,14 @@ class Alerts:
                         self.on_new(area, alert)
                     except Exception:
                         log.exception("notifying %s failed", k)
+        now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        self.first_seen = {k: self.first_seen.get(k) or (alert.get("issued") if self.known is None else None) or now
+                           for k, (area, alert) in active.items()}
         self.known = set(active)
+        try:
+            self.seen_file.write_text(json.dumps(self.first_seen))
+        except Exception as e:
+            log.warning("could not save alert first-seen times: %s", e)
         try:
             self.state_file.parent.mkdir(parents=True, exist_ok=True)
             self.state_file.write_text(json.dumps(sorted(self.known)))

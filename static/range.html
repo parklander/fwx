@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FWX · Alert panel</title>
+<link rel="icon" href="/static/icon-192.png">
+<link rel="stylesheet" href="/static/range.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><b>FWX</b> Alert panel</div>
+  <select id="area" aria-label="Area"></select>
+  <div id="feed" class="feed">Connecting…</div>
+  <div class="right">
+    <button id="mute" class="btn" title="Sound on or off">🔔 Sound on</button>
+    <div id="clock" class="clock">--:--</div>
+  </div>
+</header>
+
+<main>
+  <section id="status" class="status clear">
+    <div class="status-word" id="statusWord">Checking…</div>
+    <div class="status-sub" id="statusSub"></div>
+  </section>
+
+  <section id="alerts" class="alerts" aria-live="assertive"></section>
+
+  <section class="row">
+    <div class="card wind">
+      <h2>Wind, next 12 h <span class="muted" id="windSrc"></span></h2>
+      <div id="shift" class="shift" hidden></div>
+      <div id="windStrip" class="strip"></div>
+    </div>
+    <div class="card danger">
+      <h2>Fire danger <span class="muted">CWFIS</span></h2>
+      <div id="danger" class="days"></div>
+    </div>
+  </section>
+
+  <section class="card fires" id="firesCard">
+    <h2>Fire detections, last 24 h <span class="muted" id="firesSrc">NASA FIRMS satellites · CWFIS reported fires</span></h2>
+    <div id="fires" class="fires-body">Loading…</div>
+  </section>
+
+  <section class="card log">
+    <h2>Acknowledgements</h2>
+    <table id="acklog"><tbody></tbody></table>
+  </section>
+</main>
+
+<footer class="foot">
+  Alerts: Environment and Climate Change Canada, checked by FWX every 5 min. Wind: ECCC GEM via Open-Meteo. Danger: CWFIS. Fire detections: NASA FIRMS (VIIRS, MODIS) and CWFIS reported fires; a satellite hotspot is a heat signal, not a confirmed fire.
+  Advisory only — authority rests with range control and the Base Fire Chief.
+</footer>
+
+<div id="start" class="overlay" hidden>
+  <div class="box">
+    <h1>FWX alert panel</h1>
+    <p>Click to start. The panel sounds a tone when a new ECCC alert comes in and keeps sounding until someone acknowledges it.</p>
+    <button id="startBtn" class="btn big">Start panel</button>
+  </div>
+</div>
+
+<div id="ackDlg" class="overlay" hidden>
+  <form class="box" id="ackForm">
+    <h1 id="ackTitle">Acknowledge</h1>
+    <p>Your name or initials go in the log with the time.</p>
+    <input id="ackBy" maxlength="40" autocomplete="off" placeholder="Name or initials" required>
+    <div class="err" id="ackErr"></div>
+    <div class="btns"><button type="button" class="btn" id="ackCancel">Cancel</button>
+      <button type="submit" class="btn big">Acknowledge</button></div>
+  </form>
+</div>
+
+<script src="/static/range.js"></script>
+</body>
+</html>

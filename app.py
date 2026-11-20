@@ -20,6 +20,7 @@ from fastapi.concurrency import run_in_threadpool
 
 import alerts
 import cwfis
+import fires
 import goes
 import snowdepth
 import push
@@ -42,12 +43,29 @@ log = logging.getLogger("app")
 pusher = push.Push(DATA)
 wx_alerts = alerts.Alerts(AOI_FILE, DATA / "alerts_state.json", on_new=pusher.notify_alert)
 rdps_maps = rdps.Rdps(DATA)
+
+
+def _fire_push(area, hotspots):
+    """New satellite hotspots inside an area's box -> a push to that area's subscribers (if FW_FIRE_PUSH=1)."""
+    if os.environ.get("FW_FIRE_PUSH", "0") != "1":
+        return
+    t = max(h["time"] for h in hotspots)
+    when = datetime.fromisoformat(t).astimezone(TZ).strftime("%H:%M")
+    n = len(hotspots)
+    pusher.notify_alert(area, {"name": "Satellite hotspot" + ("s" if n > 1 else ""),
+                               "text": f"{n} new satellite fire detection{'s' if n > 1 else ''} inside the area, latest {when} "
+                                       f"({hotspots[-1]['sat']}). Could be a range fire, a burn or a wildfire; check it."})
+
+
+fire_data = fires.Fires(AOI_FILE, DATA, on_new=_fire_push)
 _stop = threading.Event()
 
 
 @asynccontextmanager
 async def lifespan(app):
     threading.Thread(target=wx_alerts.loop, args=(_stop,), name="alerts", daemon=True).start()
+    if os.environ.get("FW_FIRES", "1") != "0":
+        threading.Thread(target=fire_data.loop, args=(_stop,), name="fires", daemon=True).start()
     if os.environ.get("FW_RDPS", os.environ.get("FW_WIND", "1")) != "0":
         threading.Thread(target=rdps_maps.loop, args=(_stop,), name="rdps", daemon=True).start()
     yield
@@ -179,9 +197,100 @@ def rdps_frame(run: str, var: str, fh: int):
 
 # ---- ECCC alerts and push notifications ----------------------------------------------------------
 
+ACK_LOG = DATA / "alert_acks.jsonl"  # every acknowledgement, append-only
+_ack_lock = threading.Lock()
+
+
+def _read_acks():
+    try:
+        lines = ACK_LOG.read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return []
+    out = []
+    for ln in lines:
+        try:
+            out.append(json.loads(ln))
+        except ValueError:
+            pass
+    return out
+
+
+def _ts(s):
+    """Seconds since the epoch for an ISO time (with Z or an offset); 0 if it can't be read."""
+    try:
+        d = datetime.fromisoformat(s.replace("Z", "+00:00"))
+        return d.timestamp() if d.tzinfo else d.replace(tzinfo=TZ).timestamp()
+    except Exception:
+        return 0
+
+
+def _with_acks(areas):
+    """Each active alert gets the latest acknowledgement made while it was in effect (key: area + alert name).
+
+    An ack older than the alert's first appearance belongs to an earlier alert of the same name.
+    """
+    latest = {}
+    for a in _read_acks():
+        latest[(a["area"], a["name"])] = a
+    out = []
+    for v in areas:
+        v = dict(v)
+        al = []
+        for x in v["alerts"]:
+            x = dict(x)
+            first = wx_alerts.first_seen.get(f"{v['id']}|{x['name']}")
+            ack = latest.get((v["id"], x["name"]))
+            if ack and first and _ts(ack["at"]) < _ts(first):
+                ack = None
+            x["first_seen"], x["ack"] = first, ack
+            al.append(x)
+        v["alerts"] = al
+        out.append(v)
+    return out
+
+
 @app.get("/api/alerts")
 def weather_alerts():
-    return {"poll_min": alerts.POLL_MIN, "areas": wx_alerts.view()}
+    return {"poll_min": alerts.POLL_MIN, "now": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "areas": _with_acks(wx_alerts.view())}
+
+
+@app.post("/api/alerts/ack")
+def ack_alert(area: str = Body(...), name: str = Body(...), by: str = Body(...), issued: str | None = Body(None)):
+    by = re.sub(r"\s+", " ", by).strip()[:40]
+    if not by:
+        raise HTTPException(400, "enter your name or initials")
+    cur = wx_alerts.for_area(area)
+    if not cur or name not in {x["name"] for x in cur["alerts"]}:
+        raise HTTPException(404, "that alert is no longer in effect")
+    rec = {"at": datetime.now().astimezone().isoformat(timespec="seconds"), "area": area, "name": name,
+           "issued": issued, "by": by}
+    with _ack_lock:
+        DATA.mkdir(parents=True, exist_ok=True)
+        with ACK_LOG.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(rec) + "\n")
+    log.warning("ALERT ACK %s: %s by %s", area, name, by)
+    return rec
+
+
+@app.get("/api/alerts/acklog")
+def ack_log(area: str | None = None, limit: int = Query(20, ge=1, le=500)):
+    rows = [a for a in _read_acks() if area is None or a["area"] == area]
+    return {"acks": rows[-limit:][::-1]}
+
+
+# ---- fire detections: FIRMS satellite hotspots and CWFIS agency-reported fires ----------------------------
+
+@app.get("/api/fires")
+def fire_map(bbox: str | None = Query(None, pattern=r"^-?[\d.]+,-?[\d.]+,-?[\d.]+,-?[\d.]+$"),
+             hours: int = Query(24, ge=1, le=fires.KEEP_HOURS)):
+    box = tuple(float(v) for v in bbox.split(",")) if bbox else None
+    return fire_data.geojson(box, hours)
+
+
+@app.get("/api/fires/area/{aoi}")
+def fires_near(aoi: str, hours: int = Query(24, ge=1, le=fires.KEEP_HOURS), km: float = Query(fires.NEAR_KM, ge=0, le=200)):
+    return fire_data.near(find_area(aoi), hours, km)
 
 
 @app.get("/api/push/key")
@@ -232,13 +341,13 @@ def manifest():
     return FileResponse(ROOT / "static" / "manifest.webmanifest", media_type="application/manifest+json")
 
 
-def _versioned_index():
+def _versioned_index(page="index.html"):
     """index.html with ?v=<content hash> on its own scripts and stylesheet.
 
     Browsers (installed phone apps especially) cache /static files for a while and could run an old panel.js
     under a new index.html. A new hash after every deploy makes them fetch the new files.
     """
-    html = (ROOT / "static" / "index.html").read_text(encoding="utf-8")
+    html = (ROOT / "static" / page).read_text(encoding="utf-8")
 
     def ver(m):
         f = ROOT / "static" / m[2]
@@ -254,6 +363,15 @@ _INDEX = _versioned_index()
 @app.get("/")
 def index():
     return Response(_INDEX, media_type="text/html", headers={"Cache-Control": "no-cache"})
+
+
+_RANGE = _versioned_index("range.html")
+
+
+@app.get("/range")
+def range_panel():
+    """Wall display for range control and the fire hall: ECCC alerts with acknowledgement, next 12 h wind."""
+    return Response(_RANGE, media_type="text/html", headers={"Cache-Control": "no-cache"})
 
 
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")

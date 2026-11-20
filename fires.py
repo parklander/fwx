@@ -37,10 +37,15 @@ FIRMS_DAYS = 2        # today and yesterday (UTC); each day is one transaction o
 FIRMS_EVERY_MIN = 15
 KEEP_HOURS = 48
 
-REPORTED_WFS = [  # (WFS endpoint, layer) tried in order
+# Current reported fires, tried in order. The CSV holds only today's fires and is small. The CWFIF WFS layer
+# is time-enabled back to 2010, so it is asked only for fires seen in the last few days (and capped).
+REPORTED_CSV = "https://cwfis.cfs.nrcan.gc.ca/downloads/activefires/activefires.csv"
+REPORTED_WFS = [  # (WFS endpoint, layer)
     ("https://geoserver.cwfif.nrcan.gc.ca/geoserver/wfs", "public:cwfif_national_activefires"),
     ("https://cwfis.cfs.nrcan.gc.ca/geoserver/wfs", "public:activefires_current"),
 ]
+REPORTED_MAX = 3000      # never take more than this many features from the WFS
+REPORTED_MAX_BYTES = 8e6  # nor a bigger response
 REPORTED_EVERY_MIN = 60
 NEAR_KM = 25  # "near" an area: inside its box, or within this distance of it
 
@@ -122,6 +127,27 @@ STAGE = {"OC": "Out of control", "BH": "Being held", "UC": "Under control", "OUT
          "MOD": "Modified response", "MON": "Monitored", "FULL": "Full response"}
 
 
+def parse_reported_csv(text):
+    """The CWFIS activefires.csv (agency, firename, lat, lon, startdate, hectares, stage_of_control, ...)."""
+    rows = csv.DictReader(io.StringIO(text.lstrip("\ufeff")))
+    return parse_reported({"features": [{"geometry": None, "properties": {k.strip(): v for k, v in r.items() if k}}
+                                        for r in rows]})
+
+
+def _current(fires_, days=10):
+    """Drop fires that are out, and any that started long ago and aren't still burning (a time-enabled layer)."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).date().isoformat()
+    out = []
+    for f in fires_:
+        if (f["stage"] or "").lower() in ("out", "extinguished"):
+            continue
+        st = str(f["start"] or "")[:10].replace("/", "-")
+        if st and st < cutoff and not f["stage"]:
+            continue
+        out.append(f)
+    return out
+
+
 def parse_reported(geojson):
     out = []
     for f in geojson.get("features", []):
@@ -174,7 +200,7 @@ class Fires:
                 rows = parse_firms(r.text, label)
                 got += rows
                 errors[src] = None
-                log.info("FIRMS %s: %d detections", src, len(rows))
+                log.info("FIRMS %s: %d detections (%d kB)", src, len(rows), len(r.content) // 1024)
             except Exception as e:
                 log.warning("FIRMS %s failed: %s", src, e)
                 errors[src] = str(e)[:200]
@@ -191,20 +217,38 @@ class Fires:
         self._announce()
 
     # CWFIS
+    def _get_capped(self, url, params=None):
+        """GET that gives up past REPORTED_MAX_BYTES instead of pulling a huge layer into memory."""
+        with _session.get(url, params=params, timeout=60, stream=True) as r:
+            r.raise_for_status()
+            buf = bytearray()
+            for chunk in r.iter_content(65536):
+                buf += chunk
+                if len(buf) > REPORTED_MAX_BYTES:
+                    raise ValueError(f"response over {REPORTED_MAX_BYTES / 1e6:.0f} MB; not the current-fires layer")
+            return buf.decode(r.encoding or "utf-8", errors="replace")
+
     def poll_reported(self):
-        last = None
+        t0 = datetime.now(timezone.utc)
+        tries = [("csv", REPORTED_CSV, None)]
+        since = (t0 - timedelta(days=3)).strftime("%Y-%m-%dT00:00:00Z")
         for url, layer in REPORTED_WFS:
+            tries.append(("wfs", url, {"service": "WFS", "version": "1.1.0", "request": "GetFeature", "typeName": layer,
+                                       "outputFormat": "application/json", "srsName": "EPSG:4326",
+                                       "maxFeatures": REPORTED_MAX, "time": f"{since}/PRESENT"}))
+        last = None
+        for kind, url, params in tries:
             try:
-                r = _session.get(url, timeout=60, params={"service": "WFS", "version": "1.1.0", "request": "GetFeature",
-                                                          "typeName": layer, "outputFormat": "application/json",
-                                                          "srsName": "EPSG:4326"})
-                r.raise_for_status()
-                rows = parse_reported(r.json())
+                text = self._get_capped(url, params)
+                rows = parse_reported_csv(text) if kind == "csv" else parse_reported(json.loads(text))
+                rows = _current(rows)
+                secs = (datetime.now(timezone.utc) - t0).total_seconds()
                 with self.lock:
                     self.reported = rows
                     self.status["reported"] = {"checked": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                                               "error": None, "source": layer}
-                log.info("CWFIS reported fires (%s): %d", layer, len(rows))
+                                               "error": None, "source": (params or {}).get("typeName", "activefires.csv")}
+                log.info("CWFIS reported fires from %s: %d current (%.1f s, %d kB)", self.status["reported"]["source"],
+                         len(rows), secs, len(text) // 1024)
                 return
             except Exception as e:
                 last = e
@@ -255,14 +299,14 @@ class Fires:
             stop.wait(FIRMS_EVERY_MIN * 60)
 
     # ---- views --------------------------------------------------------------------------------------
-    def geojson(self, bbox=None, hours=24, limit=20000):
+    def geojson(self, bbox=None, hours=24, limit=8000):
         """Hotspots (newest last) and reported fires as GeoJSON for the map."""
         cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat(timespec="minutes")
         w, s, e, n = bbox or CANADA
         inb = lambda p: w <= p["lon"] <= e and s <= p["lat"] <= n
         with self.lock:
             hs = [h for h in self.hotspots if h["time"] >= cutoff and inb(h)][-limit:]
-            rep = [f for f in self.reported if inb(f)]
+            rep = [f for f in self.reported if inb(f)][:1000]
             st = json.loads(json.dumps(self.status))
         feats = [{"type": "Feature", "geometry": {"type": "Point", "coordinates": [h["lon"], h["lat"]]},
                   "properties": {"kind": "hotspot", **{k: v for k, v in h.items() if k not in ("lat", "lon")}}} for h in hs]

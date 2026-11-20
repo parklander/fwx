@@ -266,7 +266,7 @@
     $("firesCard").classList.toggle("hot", recentInside);
     const rows = j.hotspots.slice(0, 6).map((h) => `<tr><td class="age"><span class="dot" style="background:${AGE_COL(ageH(h.time))}"></span>${esc(agoTxt(h.time))}</td>
         <td>${h.km === 0 ? "<b>inside area</b>" : `${h.km} km out`}</td><td>${esc(h.sat)}${h.conf ? ` · ${esc(h.conf)}` : ""}${h.frp != null ? ` · ${h.frp} MW` : ""}</td></tr>`).join("");
-    const rep = j.reported.slice(0, 4).map((f) => `<tr><td class="age">▲ ${f.km === 0 ? "inside" : `${f.km} km`}</td>
+    const rep = j.reported.slice(0, 4).map((f) => `<tr><td class="age">◉ ${f.km === 0 ? "inside" : `${f.km} km`}</td>
         <td>${esc(f.name)}${f.agency ? ` (${esc(f.agency)})` : ""}</td><td>${esc(f.stage || "")}${f.ha != null ? ` · ${f.ha} ha` : ""}</td></tr>`).join("");
     const notes = [];
     if (!st.firms?.enabled) notes.push("Satellite detections are off: the FIRMS key isn't set on the server.");

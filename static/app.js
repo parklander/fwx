@@ -6,7 +6,7 @@
   const iso = (d) => d.toISOString().slice(0, 10);
   const today = iso(new Date(Date.now() - new Date().getTimezoneOffset() * 60000));
   const prefs = (() => { try { return JSON.parse(localStorage.getItem("cwfis-prefs") || "{}"); } catch (_) { return {}; } })();
-  const save = () => { try { localStorage.setItem("cwfis-prefs", JSON.stringify({ aoi: $("aoi").value, layer: $("layer").value, wind: $("wind").value, precip: $("precip").value, basemap: $("basemap").value, fires: $("fires").value })); } catch (_) {} };
+  const save = () => { try { localStorage.setItem("cwfis-prefs", JSON.stringify({ aoi: $("aoi").value, layer: $("layer").value, wind: $("wind").value, precip: $("precip").value, basemap: $("basemap").value, fires: $("fires").value, repfires: $("repfires").value })); } catch (_) {} };
 
   const map = L.map("map", { zoomControl: true }).setView([55, -97], 4);
 
@@ -692,55 +692,78 @@
   $("wb-next").onclick = () => { stopPlay(); step(1); };
   $("wb-hour").oninput = () => { stopPlay(); showRdps(); };
   $("wb-close").onclick = () => { $("wind").value = "off"; $("precip").value = "off"; save(); showRdps(); };
-  // ---- fire detections: FIRMS hotspots coloured by age, CWFIS reported fires as triangles ---------------
+  // ---- fires: FIRMS satellite hotspots by age (Hotspots), and the CWFIS agency-reported fires (Reported fires) ----
   map.createPane("fires");
   map.getPane("fires").style.zIndex = 450;
   const fireCanvas = L.canvas({ pane: "fires", padding: 0.3 });
-  const fireLayer = L.layerGroup();
-  const FIRE_AGE = [[6, "#ff2d2d", "under 6 h"], [24, "#ff9800", "6–24 h"], [48, "#ffd54f", "24–48 h"]];
+  const hotLayer = L.layerGroup(), repLayer = L.layerGroup();
+  const FIRE_AGE = [[6, "#ff2d2d"], [24, "#ff9800"], [48, "#ffd54f"]];
   const fireColor = (hrs) => (FIRE_AGE.find(([h]) => hrs < h) || FIRE_AGE[2])[1];
   const ago = (t) => { const m = (Date.now() - new Date(t)) / 60e3; return m < 90 ? `${Math.round(m)} min ago` : `${Math.round(m / 60)} h ago`; };
   const fireT = (t) => new Date(t).toLocaleString("en-CA", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
   const escF = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
-  let fireTimer = null, fireReq = 0, fireBox = null, fireHrs = null;
-  async function loadFires(force) {
+  const fireNote = { hot: "", rep: "" };
+  const showFireNote = () => status([fireNote.hot, fireNote.rep].filter(Boolean).join(" · "));
+
+  // hotspots: fetched for the view (padded); panning inside what was fetched needs no new request
+  let hotReq = 0, hotBox = null, hotHrs = null;
+  async function loadHotspots(force) {
     const hrs = $("fires").value;
-    if (hrs === "off") { map.removeLayer(fireLayer); fireLayer.clearLayers(); fireBox = null; return; }
-    if (!map.hasLayer(fireLayer)) fireLayer.addTo(map);
-    // panning within what was already fetched needs no new request
-    if (!force && fireBox && fireHrs === hrs && fireBox.contains(map.getBounds())) return;
-    const b = map.getBounds().pad(0.5), my = ++fireReq;
+    if (hrs === "off") { map.removeLayer(hotLayer); hotLayer.clearLayers(); hotBox = null; fireNote.hot = ""; showFireNote(); return; }
+    if (!map.hasLayer(hotLayer)) hotLayer.addTo(map);
+    if (!force && hotBox && hotHrs === hrs && hotBox.contains(map.getBounds())) return;
+    const b = map.getBounds().pad(0.5), my = ++hotReq;
     const box = [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()].map((v) => v.toFixed(3)).join(",");
     let j;
-    try { j = await (await fetch(`/api/fires?hours=${hrs}&bbox=${box}`)).json(); } catch (_) { status("Fire detections are unavailable right now."); return; }
-    if (my !== fireReq || $("fires").value === "off") return;
-    fireBox = b; fireHrs = hrs;
-    fireLayer.clearLayers();
+    try { j = await (await fetch(`/api/fires?hours=${hrs}&bbox=${box}&reported=false`)).json(); }
+    catch (_) { fireNote.hot = "Hotspots unavailable right now"; showFireNote(); return; }
+    if (my !== hotReq || $("fires").value === "off") return;
+    hotBox = b; hotHrs = hrs;
+    hotLayer.clearLayers();
     const now = Date.now();
     for (const f of j.features) {
       const [lon, lat] = f.geometry.coordinates, p = f.properties;
-      if (p.kind === "hotspot") {
-        const hrsOld = (now - new Date(p.time)) / 36e5;
-        L.circleMarker([lat, lon], { renderer: fireCanvas, radius: 4, weight: 1, color: "#3a0000", fillColor: fireColor(hrsOld), fillOpacity: 0.95 })
-          .bindPopup(`<b>Satellite hotspot</b><br>${escF(fireT(p.time))} (${ago(p.time)})<br>${escF(p.sat)}${p.conf ? ` · ${escF(p.conf)} confidence` : ""}${p.frp != null ? `<br>Fire radiative power ${p.frp} MW` : ""}${p.day ? "" : " · night pass"}<br><span class="sub">A heat signal, not a confirmed fire. Source: NASA FIRMS.</span>`)
-          .addTo(fireLayer);
-      } else {
-        // drawn on the same canvas as the hotspots (cheap even with many fires): a larger ring
-        L.circleMarker([lat, lon], { renderer: fireCanvas, radius: 7, weight: 3, color: "#ffffff", fillColor: "#b71c1c", fillOpacity: 1 })
-          .bindPopup(`<b>${escF(p.name)}</b>${p.agency ? ` (${escF(p.agency)})` : ""}<br>${p.stage ? escF(p.stage) : "Stage not given"}${p.ha != null ? ` · ${p.ha} ha` : ""}${p.start ? `<br>Started ${escF(String(p.start).slice(0, 10))}` : ""}<br><span class="sub">Reported by the fire agency. Source: CWFIS.</span>`)
-          .addTo(fireLayer);
-      }
+      L.circleMarker([lat, lon], { renderer: fireCanvas, radius: 4, weight: 1, color: "#3a0000", fillColor: fireColor((now - new Date(p.time)) / 36e5), fillOpacity: 0.95 })
+        .bindPopup(`<b>Satellite hotspot</b><br>${escF(fireT(p.time))} (${ago(p.time)})<br>${escF(p.sat)}${p.conf ? ` · ${escF(p.conf)} confidence` : ""}${p.frp != null ? `<br>Fire radiative power ${p.frp} MW` : ""}${p.day ? "" : " · night pass"}<br><span class="sub">A heat signal, not a confirmed fire. Source: NASA FIRMS.</span>`)
+        .addTo(hotLayer);
     }
-    const st = j.status || {}, n = j.features.filter((f) => f.properties.kind === "hotspot").length;
-    const firmsNote = !st.firms?.enabled ? "FIRMS key not set on the server" : st.firms.error ? st.firms.error : `${n} hotspots in view`;
-    status(`Fires: ${firmsNote} · dots: red <6 h, orange 6–24 h, yellow 24–48 h · ringed: agency-reported`);
+    const st = j.status?.firms || {};
+    fireNote.hot = !st.enabled ? "Hotspots: FIRMS key not set on the server" : st.error ? `Hotspots: ${st.error}`
+      : `Hotspots: ${j.features.length} in view (red <6 h, orange 6–24 h, yellow 24–48 h)`;
+    showFireNote();
   }
-  let fireMove = null;
-  map.on("moveend", () => { if ($("fires").value !== "off") { clearTimeout(fireMove); fireMove = setTimeout(loadFires, 400); } });
+
+  // reported fires: the agencies' current list, all of Canada (a few hundred at most), not time-limited
+  let repReq = 0;
+  async function loadReported() {
+    if ($("repfires").value === "off") { map.removeLayer(repLayer); repLayer.clearLayers(); fireNote.rep = ""; showFireNote(); return; }
+    if (!map.hasLayer(repLayer)) repLayer.addTo(map);
+    const my = ++repReq;
+    let j;
+    try { j = await (await fetch("/api/fires?hotspots=false")).json(); }
+    catch (_) { fireNote.rep = "Reported fires unavailable right now"; showFireNote(); return; }
+    if (my !== repReq || $("repfires").value === "off") return;
+    repLayer.clearLayers();
+    for (const f of j.features) {
+      const [lon, lat] = f.geometry.coordinates, p = f.properties;
+      L.circleMarker([lat, lon], { renderer: fireCanvas, radius: 7, weight: 3, color: "#ffffff", fillColor: "#b71c1c", fillOpacity: 1 })
+        .bindPopup(`<b>${escF(p.name)}</b>${p.agency ? ` (${escF(p.agency)})` : ""}<br>${p.stage ? escF(p.stage) : "Stage not given"}${p.ha != null ? ` · ${p.ha} ha` : ""}${p.start ? `<br>Started ${escF(String(p.start).slice(0, 10))}` : ""}<br><span class="sub">Reported by the fire agency. Source: CWFIS.</span>`)
+        .addTo(repLayer);
+    }
+    const st = j.status?.reported || {};
+    fireNote.rep = st.error && !j.features.length ? "Reported fires: CWFIS isn't answering" : `Reported fires: ${j.features.length} in Canada (ringed)`;
+    showFireNote();
+  }
+
+  let hotMove = null;
+  map.on("moveend", () => { if ($("fires").value !== "off") { clearTimeout(hotMove); hotMove = setTimeout(() => loadHotspots(false), 400); } });
   $("fires").value = ["24", "48"].includes(prefs.fires) ? prefs.fires : "off";
-  $("fires").onchange = () => { save(); if ($("fires").value === "off") status(""); loadFires(true); };
-  clearInterval(fireTimer); fireTimer = setInterval(() => { if ($("fires").value !== "off") loadFires(true); }, 15 * 60e3);
-  loadFires();
+  $("repfires").value = prefs.repfires === "on" ? "on" : "off";
+  $("fires").onchange = () => { save(); loadHotspots(true); };
+  $("repfires").onchange = () => { save(); loadReported(); };
+  setInterval(() => { if ($("fires").value !== "off") loadHotspots(true); }, 15 * 60e3);
+  setInterval(() => { if ($("repfires").value !== "off") loadReported(); }, 30 * 60e3);
+  loadHotspots(true); loadReported();
 
   $("wind").value = ["particles", "arrows"].includes(prefs.wind) ? prefs.wind : "off";
   $("precip").value = ["on", "snow"].includes(prefs.precip) ? prefs.precip : "off";

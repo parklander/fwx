@@ -299,14 +299,14 @@ class Fires:
             stop.wait(FIRMS_EVERY_MIN * 60)
 
     # ---- views --------------------------------------------------------------------------------------
-    def geojson(self, bbox=None, hours=24, limit=8000):
-        """Hotspots (newest last) and reported fires as GeoJSON for the map."""
+    def geojson(self, bbox=None, hours=24, limit=8000, hotspots=True, reported=True):
+        """Hotspots of the last `hours` (newest last) and/or the current reported fires, as GeoJSON for the map."""
         cutoff = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat(timespec="minutes")
         w, s, e, n = bbox or CANADA
         inb = lambda p: w <= p["lon"] <= e and s <= p["lat"] <= n
         with self.lock:
-            hs = [h for h in self.hotspots if h["time"] >= cutoff and inb(h)][-limit:]
-            rep = [f for f in self.reported if inb(f)][:1000]
+            hs = [h for h in self.hotspots if h["time"] >= cutoff and inb(h)][-limit:] if hotspots else []
+            rep = [f for f in self.reported if inb(f)][:1000] if reported else []
             st = json.loads(json.dumps(self.status))
         feats = [{"type": "Feature", "geometry": {"type": "Point", "coordinates": [h["lon"], h["lat"]]},
                   "properties": {"kind": "hotspot", **{k: v for k, v in h.items() if k not in ("lat", "lon")}}} for h in hs]

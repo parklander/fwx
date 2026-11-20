@@ -273,14 +273,15 @@
     else if (st.firms.error) notes.push("FIRMS isn't answering; showing the last detections received.");
     else if (st.firms.checked) notes.push(`FIRMS checked ${hm(new Date(st.firms.checked))}.`);
     if (st.reported?.error) notes.push("CWFIS reported fires unavailable.");
-    notes.push(`Hotspots within ${j.km} km; reported fires within ${Math.max(j.km, 50)} km. A hotspot can be a range fire, a burn or a flare.`);
+    notes.push("A hotspot is a heat signal (a range fire, a burn, a flare stack) and is not a confirmed fire; reported fires are the agencies' current list.");
     $("fires").innerHTML = `
       <div class="fcount">
-        <div><b class="${j.inside ? "hot" : ""}">${j.inside}</b><span>inside area</span></div>
-        <div><b>${j.nearby}</b><span>within ${j.km} km</span></div>
-        <div><b>${j.reported.length}</b><span>reported fires</span></div>
+        <div><b class="${j.inside ? "hot" : ""}">${j.inside}</b><span>hotspots inside<br>area, 24 h</span></div>
+        <div><b>${j.nearby}</b><span>hotspots within<br>${j.km} km, 24 h</span></div>
+        <div><b>${j.reported.length}</b><span>reported fires<br>within ${Math.max(j.km, 50)} km, now</span></div>
       </div>
-      <div class="flist">${rows || rep ? `<table>${rows}${rep}</table>` : "No detections in the last 24 h."}
+      <div class="flist">${rows ? `<table>${rows}</table>` : "No satellite hotspots in the last 24 h."}
+        ${rep ? `<table style="margin-top:8px">${rep}</table>` : ""}
         ${j.latest ? `<div class="muted">Latest detection ${esc(when(j.latest))}</div>` : ""}</div>
       <div class="fnote">${esc(notes.join(" "))}</div>`;
   }

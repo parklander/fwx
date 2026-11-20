@@ -283,9 +283,10 @@ def ack_log(area: str | None = None, limit: int = Query(20, ge=1, le=500)):
 
 @app.get("/api/fires")
 def fire_map(bbox: str | None = Query(None, pattern=r"^-?[\d.]+,-?[\d.]+,-?[\d.]+,-?[\d.]+$"),
-             hours: int = Query(24, ge=1, le=fires.KEEP_HOURS)):
+             hours: int = Query(24, ge=1, le=fires.KEEP_HOURS), hotspots: bool = True, reported: bool = True):
+    """Satellite hotspots (last `hours`) and the agency-reported fires in effect now (not time-limited)."""
     box = tuple(float(v) for v in bbox.split(",")) if bbox else None
-    return fire_data.geojson(box, hours)
+    return fire_data.geojson(box, hours, hotspots=hotspots, reported=reported)
 
 
 @app.get("/api/fires/area/{aoi}")

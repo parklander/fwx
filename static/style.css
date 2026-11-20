@@ -260,3 +260,4 @@ body.settings-open #controls { display: block; }
   #controls .about { display: block; }
   #status { top: auto; bottom: 30px; left: 8px; max-width: 70vw; font-size: 12px; }
 }
+.btn.off { background: #5b6670; cursor: not-allowed; }

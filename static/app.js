@@ -49,11 +49,32 @@
   let wind = null;  // RDPS wind overlay, set up once the RDPS metadata arrives
 
   // ---- areas -----------------------------------------------------------------------------------
-  const { default: defAoi, areas } = await (await fetch("/api/areas")).json();
+  const { areas } = await (await fetch("/api/areas")).json();
   const byId = Object.fromEntries(areas.map((a) => [a.id, a]));
-  $("aoi").innerHTML = areas.map((a) => `<option value="${a.id}">${a.name}${a.prov ? ` (${a.prov})` : ""}</option>`).join("");
+  // the area list: the user's own base on top (if they set one), then by province west to east, A-Z within
+  // ("CFB Borden" sorts under B); no base is favoured until the user picks theirs under Layers → My base
+  const PROV = ["BC", "YT", "AB", "NT", "SK", "MB", "NU", "ON", "QC", "NB", "PE", "NS", "NL"];
+  const PROV_NAME = { BC: "British Columbia", YT: "Yukon", AB: "Alberta", NT: "Northwest Territories", SK: "Saskatchewan", MB: "Manitoba",
+    NU: "Nunavut", ON: "Ontario", QC: "Quebec", NB: "New Brunswick", PE: "Prince Edward Island", NS: "Nova Scotia", NL: "Newfoundland and Labrador" };
+  const sortKey = (n) => n.replace(/^(CFB|CFS|CFD|BFC|CF Camp|Camp|Det|NDHQ|\d+ Wing)\s+/i, "").toLowerCase();
+  const getBase = () => { try { const b = localStorage.getItem("fwx-base"); return byId[b] ? b : ""; } catch (_) { return ""; } };
+  function areaOptions(base, placeholder) {
+    const opt = (a) => `<option value="${a.id}">${a.name}${a.prov ? ` (${a.prov})` : ""}</option>`;
+    const groups = {};
+    for (const a of areas) (groups[a.prov || "Other"] ||= []).push(a);
+    const order = Object.keys(groups).sort((x, y) => ((PROV.indexOf(x) + 1) || 99) - ((PROV.indexOf(y) + 1) || 99));
+    return (placeholder ? `<option value="" disabled>${placeholder}</option>` : "")
+      + (base ? `<optgroup label="My base">${opt(byId[base])}</optgroup>` : "")
+      + order.map((p) => `<optgroup label="${PROV_NAME[p] || p}">${groups[p].sort((x, y) => sortKey(x.name).localeCompare(sortKey(y.name))).map(opt).join("")}</optgroup>`).join("");
+  }
+  function fillAreas() {
+    const cur = $("aoi").value;
+    $("aoi").innerHTML = areaOptions(getBase(), "Choose an area…");
+    $("aoi").value = cur;
+  }
+  fillAreas();
   const linked = new URLSearchParams(location.search).get("aoi");  // e.g. from a notification
-  $("aoi").value = byId[linked] ? linked : byId[prefs.aoi] ? prefs.aoi : defAoi || areas[0].id;
+  $("aoi").value = byId[linked] ? linked : byId[prefs.aoi] ? prefs.aoi : getBase();
   // every area: its box (or a dot where it has none) with a label; click one to select it
   const areaLayer = L.layerGroup().addTo(map);
   const shapes = {};
@@ -87,7 +108,7 @@
   // Hide labels that would overlap one already shown (the selected area's goes first); zooming in brings them back
   function declutter() {
     const sel = $("aoi").value;
-    const order = [sel, ...areas.map((a) => a.id).filter((id) => id !== sel)];
+    const order = [sel, ...areas.map((a) => a.id).filter((id) => id !== sel)].filter((id) => shapes[id]);
     const shown = [];
     for (const id of order) {
       let el = null;
@@ -116,7 +137,7 @@
       if (on) g.bringToFront();
     }
     declutter();
-    if (fly) {
+    if (fly && a) {
       // keep the area clear of the forecast panel at the bottom
       const pad = window.fwxSheet?.padding() || { left: 0, bottom: 0 };
       const box = a.bbox ? L.latLngBounds([[a.bbox[1], a.bbox[0]], [a.bbox[3], a.bbox[2]]])
@@ -284,6 +305,10 @@
   setInterval(loadSnow, 10 * 60e3);
 
   function updatePdfLink() {
+    const none = !$("aoi").value;
+    $("pdf").classList.toggle("off", none);
+    $("pdf").title = none ? "Choose an area first" : "Forecast PDF for the selected area";
+    if (none) { $("pdf").removeAttribute("href"); return; }
     const d = $("date").value || today;
     const start = iso(new Date(Date.parse(d) - 86400e3));
     $("pdf").href = `/api/forecast.pdf?aoi=${encodeURIComponent($("aoi").value)}&start=${start}`;
@@ -293,7 +318,20 @@
   $("country").onclick = showCountry;
   $("layer").onchange = () => { save(); showLayer(); };
   $("date").onchange = () => { showLayer(); updatePdfLink(); };
-  $("pdf").onclick = () => status("Building the PDF — CWFIS takes 10–30 s for a full forecast…");
+  $("pdf").onclick = (e) => {
+    if (!$("aoi").value) { e.preventDefault(); status("Choose an area first, or set your base under Layers → My base."); return; }
+    status("Building the PDF — CWFIS takes 10–30 s for a full forecast…");
+  };
+
+  // ---- My base: the user's own base, kept in this browser; it heads the area list and opens by default ----
+  $("mybase").innerHTML = areaOptions("", "").replace(/^/, '<option value="">None</option>');
+  $("mybase").value = getBase();
+  $("mybase").onchange = () => {
+    const b = $("mybase").value;
+    try { b ? localStorage.setItem("fwx-base", b) : localStorage.removeItem("fwx-base"); } catch (_) {}
+    fillAreas();
+    if (b && !$("aoi").value) { $("aoi").value = b; $("aoi").onchange(); }
+  };
   window.addEventListener("focus", () => { if ($("status").textContent.startsWith("Building")) status(""); });
 
   // ---- ECCC alerts ----------------------------------------------------------------------------------
@@ -393,7 +431,7 @@
     } else {
       const all = mySub.areas === "all";
       const chosen = new Set(all ? [] : mySub.areas || []);
-      if (!mySub.subscribed) chosen.add($("aoi").value);
+      if (!mySub.subscribed && $("aoi").value) chosen.add($("aoi").value);
       p.innerHTML = `<h2><span>Notify me of new ECCC alerts</span><button class="x" id="nt-close">×</button></h2>
         <div class="sub">A notification on this device whenever ECCC issues a new warning, watch or statement for these areas, even with this page closed.</div>
         <label style="display:block;margin-top:8px"><input type="checkbox" id="nt-all"${all ? " checked" : ""}> <b>All areas</b></label>

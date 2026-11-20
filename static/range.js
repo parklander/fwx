@@ -70,11 +70,23 @@
   if (qs.get("autostart") === "1") start(); else $("start").hidden = false;
 
   // ---- areas ---------------------------------------------------------------------------------------
+  // same list as the map page: the user's base (Layers → My base, shared in this browser) on top, then by province
+  const PROV = ["BC", "YT", "AB", "NT", "SK", "MB", "NU", "ON", "QC", "NB", "PE", "NS", "NL"];
+  const sortKey = (n) => n.replace(/^(CFB|CFS|CFD|BFC|CF Camp|Camp|Det|NDHQ|\d+ Wing)\s+/i, "").toLowerCase();
   async function loadAreas() {
     const r = await fetch("/api/areas"); const j = await r.json();
-    const areas = j.areas || j;
-    areaId = areas.some((a) => a.id === areaId) ? areaId : (j.default || areas[0].id);
-    $("area").innerHTML = areas.map((a) => `<option value="${esc(a.id)}"${a.id === areaId ? " selected" : ""}>${esc(a.name)}</option>`).join("");
+    const areas = j.areas || j, byId = Object.fromEntries(areas.map((a) => [a.id, a]));
+    let base = ""; try { base = localStorage.getItem("fwx-base") || ""; } catch (_) {}
+    if (!byId[base]) base = "";
+    areaId = byId[areaId] ? areaId : base;
+    const opt = (a) => `<option value="${esc(a.id)}">${esc(a.name)}${a.prov ? ` (${esc(a.prov)})` : ""}</option>`;
+    const groups = {};
+    for (const a of areas) (groups[a.prov || "Other"] ||= []).push(a);
+    const order = Object.keys(groups).sort((x, y) => ((PROV.indexOf(x) + 1) || 99) - ((PROV.indexOf(y) + 1) || 99));
+    $("area").innerHTML = `<option value="" disabled>Choose an area…</option>`
+      + (base ? `<optgroup label="My base">${opt(byId[base])}</optgroup>` : "")
+      + order.map((p) => `<optgroup label="${esc(p)}">${groups[p].sort((x, y) => sortKey(x.name).localeCompare(sortKey(y.name))).map(opt).join("")}</optgroup>`).join("");
+    $("area").value = areaId || "";
     $("area").onchange = () => {
       areaId = $("area").value;
       try { localStorage.setItem("fwx-range-aoi", areaId); } catch (_) {}
@@ -106,8 +118,16 @@
   }
 
   function render() {
-    const cur = current();
     const st = $("status"), word = $("statusWord"), sub = $("statusSub");
+    if (!areaId) {  // nothing chosen yet: say so rather than show an all-clear
+      st.className = "status stale"; word.textContent = "CHOOSE AN AREA";
+      sub.textContent = "Pick this panel's area above. It's remembered on this screen.";
+      $("feed").className = "feed"; $("feed").textContent = ""; $("alerts").innerHTML = "";
+      $("fires").textContent = "–"; $("windStrip").textContent = ""; $("danger").textContent = "";
+      document.body.classList.remove("unacked");
+      return;
+    }
+    const cur = current();
     // contact with the FWX server, and the server's last successful check of ECCC
     const checked = cur && cur.area.checked ? new Date(cur.area.checked) : null;
     const age = checked ? (Date.now() - checked) / 60e3 : Infinity;
@@ -187,6 +207,7 @@
   };
 
   async function loadLog() {
+    if (!areaId) return;
     try {
       const r = await fetch(`/api/alerts/acklog?area=${encodeURIComponent(areaId)}&limit=8`, { cache: "no-store" });
       const j = await r.json();
@@ -202,6 +223,7 @@
   const angDiff = (a, b) => { const d = Math.abs(a - b) % 360; return d > 180 ? 360 - d : d; };
 
   async function loadWx() {
+    if (!areaId) return;
     try {
       const r = await fetch(`/api/area/${encodeURIComponent(areaId)}`, { cache: "no-store" });
       const j = await r.json();
@@ -258,6 +280,7 @@
   const AGE_COL = (h) => h < 6 ? "#ff2d2d" : h < 24 ? "#ff9800" : "#ffd54f";
 
   async function loadFires() {
+    if (!areaId) return;
     let j;
     try { j = await (await fetch(`/api/fires/area/${encodeURIComponent(areaId)}?hours=24`, { cache: "no-store" })).json(); }
     catch (_) { $("fires").textContent = "Fire detections unavailable."; return; }

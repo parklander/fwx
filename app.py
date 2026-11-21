@@ -69,6 +69,10 @@ async def lifespan(app):
     threading.Thread(target=wx_alerts.loop, args=(_stop,), name="alerts", daemon=True).start()
     if os.environ.get("FW_FIRES", "1") != "0":
         threading.Thread(target=fire_data.loop, args=(_stop,), name="fires", daemon=True).start()
+    if os.environ.get("FW_WU_STATION") and os.environ.get("FW_WU_KEY"):
+        threading.Thread(target=wx_station.wu_loop, name="wu", daemon=True,
+                         args=(_stop, os.environ["FW_WU_STATION"], os.environ["FW_WU_KEY"],
+                               int(os.environ.get("FW_WU_POLL", "300")))).start()
     if os.environ.get("FW_RDPS", os.environ.get("FW_WIND", "1")) != "0":
         threading.Thread(target=rdps_maps.loop, args=(_stop,), name="rdps", daemon=True).start()
     yield
@@ -285,9 +289,9 @@ def ack_log(area: str | None = None, limit: int = Query(20, ge=1, le=500)):
     return {"acks": rows[-limit:][::-1]}
 
 
-# ---- weather station: Ecowitt "Customized" uploads -------------------------------------------------------
-# On the station: Protocol Type Ecowitt, Server fwx.rtams.ca, Path /api/station/<FW_STATION_TOKEN>, Port 80.
-# The token keeps strangers from posting readings; with FW_STATION_TOKEN unset, uploads are refused.
+# ---- weather station: polled from Weather Underground (FW_WU_STATION, FW_WU_KEY), or Ecowitt uploads ------
+# Uploads: on the station, Protocol Type Ecowitt, Path /api/station/<FW_STATION_TOKEN>. The token keeps strangers
+# from posting readings; with FW_STATION_TOKEN unset, uploads are refused.
 
 @app.post("/api/station/{token}")
 async def station_upload(token: str, request: Request):

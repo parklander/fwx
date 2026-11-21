@@ -76,18 +76,20 @@ The server keeps its notification key, the subscriptions and the alerts it has a
 
 ## Weather station
 
-The server takes uploads from an Ecowitt weather station (or anything that speaks the Ecowitt upload protocol) and keeps them in `data/station.sqlite`, converted to metric.
+The server keeps weather station readings in `data/station.sqlite`, in metric, and serves them back:
 
-On the station's web page (or the WS View Plus app), under *Weather Services → Customized*: Enable, Protocol Type **Ecowitt**, Server **fwx.rtams.ca**, Protocol **HTTP**, Path **/api/station/**`<token>`, Port **80**, Upload Interval **60**. The token is the server's `FW_STATION_TOKEN` (put it in `/etc/fwx.env` on the droplet, e.g. `FW_STATION_TOKEN=…`, then `systemctl restart cwfis-forecast`). Without it, uploads are refused. Stations post over plain HTTP and don't follow redirects, so Caddy passes station uploads through on port 80 while everything else still redirects to HTTPS.
-
-Each station is identified by a short hash of its PASSKEY; the PASSKEY itself isn't stored. The full upload is kept with each reading, so channels that aren't in the columns (soil moisture, extra sensors, battery levels) aren't lost.
-
-- `GET /api/station`: stations that have uploaded, with their last reading time and whether they've gone quiet (no upload for 10 minutes).
-- `GET /api/station/current`: the latest reading: temperature, RH, dew point, wind, gust, direction, rain (rate, today's, running total), pressure, solar radiation, UV, and its age.
+- `GET /api/station`: stations with readings, their last reading time, and whether they've gone quiet (nothing for 10 minutes).
+- `GET /api/station/current`: the latest reading: temperature, RH, dew point, wind, gust, direction, rain (rate, today's), pressure, solar radiation, UV, and its age.
 - `GET /api/station/history?hours=24`: every reading in the period.
-- `GET /api/station/hourly?hours=48`: hourly mean temperature, RH and wind, the highest gust, and the rain that fell in each hour (from the station's running total, so the reset at midnight doesn't count as rain). This is the hourly weather the FFMC/FWI calculations step through.
+- `GET /api/station/hourly?hours=48`: hourly mean temperature, RH and wind, the highest gust, and the rain that fell in each hour (the reset at midnight doesn't count as rain). This is the hourly weather the FFMC/FWI calculations step through.
 
-Add `?station=<id>` to any of them when there's more than one station; without it, they use the one that uploaded most recently. The FWI System assumes 10 m wind in the open, so a station on a house or a short mast will read low.
+Add `?station=<id>` when there's more than one station; without it, they use the one with the newest reading.
+
+**From Weather Underground** (the usual way): set `FW_WU_STATION` (e.g. `ISTOCK833`) and `FW_WU_KEY`, the free API key Weather Underground gives station owners at [wunderground.com/member/api-keys](https://www.wunderground.com/member/api-keys). On start the server fills in today's readings, then fetches the current reading every `FW_WU_POLL` seconds (default 300; the key allows 1,500 calls a day, so not below 60). Put them in `/etc/fwx.env` on the droplet and `systemctl restart cwfis-forecast`.
+
+**Direct from an Ecowitt station** (optional): with `FW_STATION_TOKEN` set, the server also takes the station's *Customized* upload (Protocol Type Ecowitt) at `/api/station/<token>`. The site redirects plain HTTP to HTTPS and stations don't follow redirects, so the station has to upload over HTTPS (port 443). Each station is identified by a short hash of its PASSKEY; the PASSKEY isn't stored.
+
+The full source record is kept with each reading, so values that aren't in the columns aren't lost. The FWI System assumes 10 m wind in the open, so a station on a house or a short mast will read low.
 
 ## Run locally
 
@@ -105,6 +107,8 @@ Open http://127.0.0.1:8000. On Windows use `.venv\Scripts\...`.
 
 ## Settings
 
+Settings and secrets can go in `/etc/fwx.env` (one `NAME=value` per line), which the service reads.
+
 `FW_TZ` (default `America/Winnipeg`) sets which day counts as "today", which decides where the PDF switches from observed to forecast, and the time zone of the issue time.
 
 ## Deploy on DigitalOcean
@@ -117,7 +121,7 @@ curl -fsSLO <raw URL of deploy/setup.sh in your repo>
 bash setup.sh https://github.com/<you>/<repo>.git fireweather.example.ca
 ```
 
-With no domain, it uses `<ip>.sslip.io` with a real HTTPS certificate. Updates: `bash /opt/cwfis-forecast/deploy/update.sh`. `update.sh` doesn't reinstall the Caddyfile or the service file; after a change to either, copy them as `setup.sh` does (the Caddyfile with `{DOMAIN}` replaced) and restart Caddy or the service. Logs: `journalctl -u cwfis-forecast -f`.
+With no domain, it uses `<ip>.sslip.io` with a real HTTPS certificate. Updates: `bash /opt/cwfis-forecast/deploy/update.sh`. `update.sh` doesn't reinstall the service file; after a change to it, `install -m 644 deploy/cwfis-forecast.service /etc/systemd/system/ && systemctl daemon-reload && systemctl restart cwfis-forecast`. Logs: `journalctl -u cwfis-forecast -f`.
 
 ## Notes
 

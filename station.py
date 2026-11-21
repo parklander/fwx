@@ -1,11 +1,16 @@
-"""Weather station uploads (Ecowitt "Customized" upload, Ecowitt protocol).
+"""Weather station readings, kept in data/station.sqlite in metric, one row per station and observation time.
 
-The station POSTs a form every interval to /api/station/<token>. Readings are converted to metric and kept in
-data/station.sqlite, one row per station and observation time, with the full upload as JSON (minus the PASSKEY,
-which is replaced by a short hash that identifies the station).
+Two ways in:
+- Weather Underground (the usual one): with FW_WU_STATION and FW_WU_KEY set, the server polls the station's current
+  conditions from the PWS API every FW_WU_POLL seconds (default 300), and on start fills in today's readings.
+  The key is the free one Weather Underground gives station owners (wunderground.com/member/api-keys).
+- Direct upload: an Ecowitt station's "Customized" upload POSTed to /api/station/<FW_STATION_TOKEN>. Its PASSKEY
+  is replaced by a short hash that identifies the station.
+The full source record is kept as JSON with each reading.
 """
 import hashlib
 import json
+import logging
 import math
 import sqlite3
 import threading
@@ -13,6 +18,11 @@ from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import parse_qsl
+
+import requests
+
+log = logging.getLogger("station")
+WU_API = "https://api.weather.com/v2/pws/observations"
 
 STALE_S = 600  # no upload for 10 minutes -> "stale"
 
@@ -104,6 +114,34 @@ def parse(body: bytes) -> dict:
     }
 
 
+def _wu_row(o: dict, received: str) -> dict:
+    """A PWS API observation (units=m) as a row. Works for /current (temp, windSpeed, ...) and for the
+    /all/1day history (tempAvg, windspeedAvg, ...). precipTotal is the total since local midnight."""
+    m = o.get("metric") or {}
+    pick = lambda d, *ks: next((d[k] for k in ks if d.get(k) is not None), None)
+    t, rh = pick(m, "temp", "tempAvg"), pick(o, "humidity", "humidityAvg")
+    t_obs = datetime.fromisoformat(o["obsTimeUtc"].replace("Z", "+00:00")).astimezone(timezone.utc)
+    return {
+        "station_id": o.get("stationID", "unknown"),
+        "obs_utc": t_obs.replace(microsecond=0).isoformat(),
+        "received_utc": received,
+        "model": o.get("softwareType"),
+        "temp_c": _r(t),
+        "rh_pct": _r(rh, 0),
+        "dewpoint_c": _r(pick(m, "dewpt", "dewptAvg")),
+        "wind_kmh": _r(pick(m, "windSpeed", "windspeedAvg")),
+        "gust_kmh": _r(pick(m, "windGust", "windgustHigh")),
+        "wind_dir_deg": _r(pick(o, "winddir", "winddirAvg"), 0),
+        "rain_total_mm": None,
+        "rain_daily_mm": _r(m.get("precipTotal"), 2),
+        "rain_rate_mmh": _r(m.get("precipRate"), 2),
+        "pressure_hpa": _r(pick(m, "pressure", "pressureMax")),
+        "solar_wm2": _r(pick(o, "solarRadiation", "solarRadiationHigh")),
+        "uv": pick(o, "uv", "uvHigh"),
+        "raw": json.dumps(o, separators=(",", ":")),
+    }
+
+
 class Station:
     def __init__(self, data_dir):
         self.path = Path(data_dir) / "station.sqlite"
@@ -119,12 +157,48 @@ class Station:
             self._ready = True
         return con
 
+    def _insert(self, rows):
+        if not rows:
+            return 0
+        keys = list(rows[0])
+        with self._lock, closing(self._db()) as con, con:
+            before = con.total_changes
+            con.executemany(f"INSERT OR IGNORE INTO obs ({', '.join(keys)}) VALUES ({', '.join('?' * len(keys))})",
+                            [[r[k] for k in keys] for r in rows])
+            return con.total_changes - before
+
     def ingest(self, body: bytes) -> dict:
         row = parse(body)
-        with self._lock, closing(self._db()) as con, con:
-            con.execute(f"INSERT OR IGNORE INTO obs ({', '.join(row)}) VALUES ({', '.join('?' * len(row))})",
-                        list(row.values()))
+        self._insert([row])
         return row
+
+    # ---- Weather Underground polling ----
+
+    def _wu_get(self, path, station, key):
+        r = requests.get(f"{WU_API}/{path}", timeout=20,
+                         params={"stationId": station, "format": "json", "units": "m", "apiKey": key})
+        if r.status_code == 204:  # station hasn't reported in the last hour
+            return []
+        r.raise_for_status()
+        return r.json().get("observations") or []
+
+    def poll_wu(self, station, key, history=False):
+        """Fetch the current reading (or, with history=True, today's readings so far). Returns rows added."""
+        now = datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+        obs = self._wu_get("all/1day" if history else "current", station, key)
+        return self._insert([_wu_row(o, now) for o in obs if o.get("obsTimeUtc")])
+
+    def wu_loop(self, stop, station, key, every=300):
+        every = max(60, every)  # the free key allows 1,500 calls a day
+        try:
+            log.info("Weather Underground %s: %d readings from today", station, self.poll_wu(station, key, history=True))
+        except (requests.RequestException, ValueError, KeyError) as e:
+            log.warning("Weather Underground %s history: %s", station, e)
+        while not stop.wait(every):
+            try:
+                self.poll_wu(station, key)
+            except (requests.RequestException, ValueError, KeyError) as e:
+                log.warning("Weather Underground %s: %s", station, e)
 
     def _rows(self, sql, args=()):
         with closing(self._db()) as con:
@@ -164,10 +238,10 @@ class Station:
 
     def hourly(self, hours, station_id=None):
         """Hourly means of temperature, RH and wind, the hour's highest gust, and the rain that fell in the hour
-        (from the station's running total, so the daily reset at midnight doesn't count as rain). Hours are
+        (from the station's running total or today's total, so the reset at midnight doesn't count as rain). Hours are
         labelled by their start, in UTC. This is the shape the hourly FFMC/FWI calculations step through."""
         rows = self.history(hours + 1, station_id)
-        out, prev = {}, None
+        out, prev, prev_day = {}, None, None
         for r in rows:
             h = out.setdefault(r["obs_utc"][:13] + ":00:00+00:00",
                                {"temp_c": [], "rh_pct": [], "wind_kmh": [], "gust_kmh": None, "rain_mm": 0.0, "n": 0})
@@ -177,11 +251,15 @@ class Station:
                     h[k].append(r[k])
             if r["gust_kmh"] is not None:
                 h["gust_kmh"] = max(h["gust_kmh"] or 0, r["gust_kmh"])
-            tot = r["rain_total_mm"]
-            if tot is not None:
+            tot, day = r["rain_total_mm"], r["rain_daily_mm"]
+            if tot is not None:  # station's running total: rain = increase; a drop is a counter reset
                 if prev is not None and tot > prev:
                     h["rain_mm"] += tot - prev
                 prev = tot
+            elif day is not None:  # today's total (Weather Underground): a drop is the midnight reset
+                if prev_day is not None:
+                    h["rain_mm"] += day - prev_day if day >= prev_day else day
+                prev_day = day
         mean = lambda xs: round(sum(xs) / len(xs), 1) if xs else None
         return [{"hour_utc": k, "temp_c": mean(h["temp_c"]), "rh_pct": mean(h["rh_pct"]),
                  "wind_kmh": mean(h["wind_kmh"]), "gust_kmh": h["gust_kmh"],

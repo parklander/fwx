@@ -3,6 +3,7 @@
 Run:  uvicorn app:app --host 127.0.0.1 --port 8000
 """
 import hashlib
+import hmac
 import json
 import logging
 import os
@@ -13,7 +14,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from fastapi import Body, FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.concurrency import run_in_threadpool
@@ -23,6 +24,7 @@ import cwfis
 import fires
 import goes
 import snowdepth
+import station
 import push
 import report_pdf
 import rdps
@@ -43,6 +45,7 @@ log = logging.getLogger("app")
 pusher = push.Push(DATA)
 wx_alerts = alerts.Alerts(AOI_FILE, DATA / "alerts_state.json", on_new=pusher.notify_alert)
 rdps_maps = rdps.Rdps(DATA)
+wx_station = station.Station(DATA)
 
 
 def _fire_push(area, hotspots):
@@ -280,6 +283,43 @@ def ack_alert(area: str = Body(...), name: str = Body(...), by: str = Body(...),
 def ack_log(area: str | None = None, limit: int = Query(20, ge=1, le=500)):
     rows = [a for a in _read_acks() if area is None or a["area"] == area]
     return {"acks": rows[-limit:][::-1]}
+
+
+# ---- weather station: Ecowitt "Customized" uploads -------------------------------------------------------
+# On the station: Protocol Type Ecowitt, Server fwx.rtams.ca, Path /api/station/<FW_STATION_TOKEN>, Port 80.
+# The token keeps strangers from posting readings; with FW_STATION_TOKEN unset, uploads are refused.
+
+@app.post("/api/station/{token}")
+async def station_upload(token: str, request: Request):
+    secret = os.environ.get("FW_STATION_TOKEN", "")
+    if not secret or not hmac.compare_digest(token.encode(), secret.encode()):
+        raise HTTPException(404)
+    row = await run_in_threadpool(wx_station.ingest, await request.body())
+    log.info("station %s: %s °C, %s %%, %s km/h", row["station_id"], row["temp_c"], row["rh_pct"], row["wind_kmh"])
+    return Response("OK", media_type="text/plain")
+
+
+@app.get("/api/station")
+def station_list():
+    """Stations that have uploaded, newest first."""
+    return {"stations": wx_station.stations()}
+
+
+@app.get("/api/station/current")
+def station_current(station: str | None = None):
+    """Latest reading, metric. Without ?station=, the station that uploaded most recently."""
+    return wx_station.current(station) or {"status": "no readings yet"}
+
+
+@app.get("/api/station/history")
+def station_history(hours: int = Query(24, ge=1, le=24 * 31), station: str | None = None):
+    return {"obs": wx_station.history(hours, station)}
+
+
+@app.get("/api/station/hourly")
+def station_hourly(hours: int = Query(48, ge=1, le=24 * 31), station: str | None = None):
+    """Hourly temperature, RH, wind, highest gust and rain, for the hourly FFMC/FWI."""
+    return {"hours": wx_station.hourly(hours, station)}
 
 
 # ---- fire detections: FIRMS satellite hotspots and CWFIS agency-reported fires ----------------------------

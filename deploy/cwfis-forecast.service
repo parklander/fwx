@@ -8,6 +8,8 @@ User=fwx
 Group=fwx
 WorkingDirectory=/opt/cwfis-forecast
 Environment=FW_TZ=America/Winnipeg
+# Secrets (FW_STATION_TOKEN, ...) live outside git; the leading - makes the file optional
+EnvironmentFile=-/etc/fwx.env
 ExecStart=/opt/cwfis-forecast/.venv/bin/uvicorn app:app --host 127.0.0.1 --port 8000
 Restart=always
 RestartSec=10

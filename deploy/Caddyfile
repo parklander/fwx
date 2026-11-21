@@ -2,3 +2,18 @@
 	encode zstd gzip
 	reverse_proxy 127.0.0.1:8000
 }
+
+# Weather stations (Ecowitt "Customized" upload) post over plain HTTP and don't follow redirects,
+# so station uploads are also accepted on port 80. Everything else still goes to HTTPS.
+http://{DOMAIN} {
+	@station_upload {
+		method POST
+		path /api/station/*
+	}
+	handle @station_upload {
+		reverse_proxy 127.0.0.1:8000
+	}
+	handle {
+		redir https://{host}{uri} 308
+	}
+}

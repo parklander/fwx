@@ -44,8 +44,12 @@ log = logging.getLogger("app")
 pusher = push.Push(DATA)
 wx_alerts = alerts.Alerts(AOI_FILE, DATA / "alerts_state.json", on_new=pusher.notify_alert)
 rdps_maps = rdps.Rdps(DATA)
-bluesky = smoke.BlueSky(DATA)
-eer_plume = smoke.Eer(DATA)
+_aoi_list = lambda: json.loads(AOI_FILE.read_text(encoding="utf-8"))["areas"]
+smoke_watch = smoke.SmokeWatch(DATA, pusher.notify_alert, _aoi_list, TZ)
+_smoke_hook = smoke_watch.check if os.environ.get("FW_SMOKE_PUSH", "1") != "0" else None
+bluesky = smoke.BlueSky(DATA, areas_fn=_aoi_list, on_update=_smoke_hook)
+eer_plume = smoke.Eer(DATA, areas_fn=_aoi_list, on_update=_smoke_hook)
+smoke_watch.sources = [eer_plume, bluesky]
 
 
 def _fire_push(area, hotspots):
@@ -172,6 +176,7 @@ def _area_panel(area):
     except Exception as e:
         log.warning("CWFIS for %s: %s", area["id"], e)
         out["errors"]["cwfis"] = "CWFIS isn't answering right now"
+    out["smoke"] = smoke.area_outlook(area["id"], (eer_plume, bluesky))
     try:
         out["weather"] = wxpoint.area_weather(area, rows)
     except Exception as e:
@@ -203,6 +208,12 @@ def bluesky_frame(run: str, i: int):
     if not p.exists():
         raise HTTPException(404, "no such hour")
     return FileResponse(p, media_type="image/png", headers={"Cache-Control": "public, max-age=86400, immutable"})
+
+
+@app.get("/api/smoke/area/{aoi}")
+def smoke_area(aoi: str):
+    """The smoke outlook for an area from the plume model and BlueSky: peak PM2.5, when, hours elevated."""
+    return smoke.area_outlook(find_area(aoi)["id"], (eer_plume, bluesky))
 
 
 @app.get("/api/smoke/eer/{run}/{i}.json")

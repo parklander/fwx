@@ -97,3 +97,9 @@ body.unacked .status { animation: pulse 1.2s ease-in-out infinite; }
 .flist .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
 .fnote { grid-column: 1 / -1; color: var(--muted); font-size: 14px; }
 @media (max-width: 1000px) { .fires-body { grid-template-columns: 1fr; } }
+
+.smoke-body { font-size: 20px; }
+.smoke-body .src { font-size: 15px; color: var(--ink2); margin-top: 4px; }
+.smoke.elevated { outline: 2px solid var(--watch); }
+.smoke.high { outline: 2px solid var(--warn); }
+.smoke-body b.elevated { color: #ffb74d; } .smoke-body b.high { color: #ff6b6b; }

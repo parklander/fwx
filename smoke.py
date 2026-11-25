@@ -147,8 +147,8 @@ def read_grid(nc):
     return var, times, lat, lon
 
 
-def render_frames(path, out_dir):
-    """Write one PNG per time step; return the manifest (times, bounds, size)."""
+def render_frames(path, out_dir, areas=()):
+    """Write one PNG per time step; return the manifest (times, bounds, size, per-area hourly maxima)."""
     import netCDF4
     from PIL import Image
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -170,19 +170,34 @@ def render_frames(path, out_dir):
         rows = np.clip(np.round((row_lat - lat[0]) / dlat).astype(int), 0, len(lat) - 1)
         edges = np.array([b[0] for b in PM_BINS], dtype=float)
         lut = _lut()
+        # grid cells sampled for each area (inside its box, or at its point)
+        cells = {}
+        for ar in areas:
+            pts = [(c, r) for x, y in area_points(ar)
+                   if 0 <= (c := int(round((x - lon[0]) / dlon))) < len(lon) and 0 <= (r := int(round((y - lat[0]) / dlat))) < len(lat)]
+            if pts:
+                cells[ar["id"]] = (np.array([p[1] for p in pts]), np.array([p[0] for p in pts]))
+        outlook = {k: [] for k in cells}
         for i in range(len(times)):
             a = var[i]
             a = np.asarray(a[0] if a.ndim == 3 else a, dtype=np.float32)  # first (surface) layer
             if flip:
                 a = a[::-1]
-            a = np.nan_to_num(np.ma.filled(a, 0), nan=0.0)[rows][:, cols]
+            a = np.nan_to_num(np.ma.filled(a, 0), nan=0.0)
+            for k, (rr, cc) in cells.items():
+                outlook[k].append(round(float(a[rr, cc].max()), 1))
+            a = a[rows][:, cols]
             Image.fromarray(lut[np.searchsorted(edges, a, side="right")], "RGBA").save(out_dir / f"{i}.png", optimize=True)
     return {"times": [t.strftime("%Y-%m-%dT%H:%MZ") for t in times],
-            "bounds": {"west": west, "east": east, "south": south, "north": north}, "width": w, "height": h}
+            "bounds": {"west": west, "east": east, "south": south, "north": north}, "width": w, "height": h,
+            "outlook": outlook}
 
 
 class BlueSky:
-    def __init__(self, data_dir):
+    name, label = "bluesky", "BlueSky Canada"
+
+    def __init__(self, data_dir, areas_fn=lambda: [], on_update=None):
+        self.areas_fn, self.on_update = areas_fn, on_update
         self.dir = Path(data_dir) / "bluesky"
         self.dir.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
@@ -205,6 +220,7 @@ class BlueSky:
             first = datetime.fromisoformat(doc["times"][0].replace("Z", "+00:00"))
             doc["stale"] = datetime.now(timezone.utc) - first > timedelta(hours=BS_STALE_H)
             doc["ended"] = last < datetime.now(timezone.utc)
+            doc.pop("outlook", None)
             out.update(doc)
         return out
 
@@ -247,7 +263,7 @@ class BlueSky:
         try:
             run = datetime.now(timezone.utc).strftime("%Y%m%d%H%M")
             out = self.dir / run
-            doc = render_frames(tmp, out)
+            doc = render_frames(tmp, out, self.areas_fn())
             doc.update(run=run, stamp=stamp, mb=round(got / 1e6, 1))
             (out / "manifest.json").write_text(json.dumps(doc))
             log.info("BlueSky: %d hours from %s, %.0f MB", len(doc["times"]), doc["times"][0], got / 1e6)
@@ -258,6 +274,8 @@ class BlueSky:
         for d in self.dir.iterdir():  # keep only the newest run
             if d.is_dir() and d.name != run:
                 shutil.rmtree(d, ignore_errors=True)
+        if self.on_update:
+            self.on_update(self)
 
 
 # ---- ECCC EER smoke plume (MLDP) shapefile contours ------------------------------------------------------
@@ -332,8 +350,10 @@ def eer_frames(zbytes):
 
 
 class Eer:
-    def __init__(self, data_dir, domain=EER_DOMAIN):
-        self.domain = domain
+    name, label = "eer", "ECCC EER plume model"
+
+    def __init__(self, data_dir, domain=EER_DOMAIN, areas_fn=lambda: [], on_update=None):
+        self.domain, self.areas_fn, self.on_update = domain, areas_fn, on_update
         self.dir = Path(data_dir) / "eer"
         self.dir.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
@@ -357,6 +377,7 @@ class Eer:
             last = datetime.fromisoformat(doc["times"][-1].replace("Z", "+00:00"))
             doc["stale"] = datetime.now(timezone.utc) - first > timedelta(hours=EER_STALE_H)
             doc["ended"] = last < datetime.now(timezone.utc)
+            doc.pop("outlook", None)
             out.update(doc)
         return out
 
@@ -396,7 +417,8 @@ class Eer:
         out.mkdir(parents=True, exist_ok=True)
         for i, (_, levels) in enumerate(frames):
             (out / f"{i}.json").write_text(json.dumps(levels, separators=(",", ":")))
-        doc = {"run": run, "stamp": stamp, "times": [t for t, _ in frames], "kb": len(buf) // 1024}
+        doc = {"run": run, "stamp": stamp, "times": [t for t, _ in frames], "kb": len(buf) // 1024,
+               "outlook": eer_outlook(frames, self.areas_fn())}
         (out / "manifest.json").write_text(json.dumps(doc))
         log.info("EER plume (%s): %d hours from %s", self.domain, len(frames), frames[0][0])
         with self._lock:
@@ -404,3 +426,121 @@ class Eer:
         for d in self.dir.iterdir():
             if d.is_dir() and d.name != run:
                 shutil.rmtree(d, ignore_errors=True)
+        if self.on_update:
+            self.on_update(self)
+
+
+# ---- smoke outlook per area, and the alert when elevated smoke is forecast ----------------------------------
+# PM2.5, µg/m³, 1-hour near-ground concentration from the model. "Elevated" is where the alert fires; the
+# EER contour levels include 35, so the two sources line up. Override with FW_SMOKE_ELEVATED / FW_SMOKE_HIGH.
+SMOKE_ELEVATED = float(__import__("os").environ.get("FW_SMOKE_ELEVATED", "35"))
+SMOKE_HIGH = float(__import__("os").environ.get("FW_SMOKE_HIGH", "100"))
+SMOKE_NOTE = 10  # below this the panels just say there's no notable smoke
+
+
+def area_points(area, n=5):
+    """Sample points for an area: an n x n grid over its box, or its reference point."""
+    box = area.get("bbox")
+    if not box:
+        return [(area["lon"], area["lat"])]
+    w, s_, e, n_ = box
+    return [(w + (e - w) * i / (n - 1), s_ + (n_ - s_) * j / (n - 1)) for i in range(n) for j in range(n)] + [(area["lon"], area["lat"])]
+
+
+def _inside(ring, x, y):
+    c = False
+    for k in range(len(ring) - 1):
+        (x1, y1), (x2, y2) = ring[k], ring[k + 1]
+        if (y1 > y) != (y2 > y) and x < (x2 - x1) * (y - y1) / (y2 - y1) + x1:
+            c = not c
+    return c
+
+
+def level_at(levels, x, y):
+    """Highest contour level whose rings hold (x, y) an odd number of times (holes respected); 0 if none."""
+    for lv in reversed(levels):
+        hits = 0
+        for ring in lv["rings"]:
+            xs = [p[0] for p in ring]
+            if min(xs) <= x <= max(xs) and _inside(ring, x, y):
+                hits += 1
+        if hits % 2:
+            return lv["level"]
+    return 0.0
+
+
+def eer_outlook(frames, areas):
+    """{area id: [highest contour level reached in the area, per hour]}"""
+    pts = {a["id"]: area_points(a) for a in areas}
+    out = {k: [] for k in pts}
+    for _, levels in frames:
+        for k, ps in pts.items():
+            out[k].append(max((level_at(levels, x, y) for x, y in ps), default=0.0))
+    return out
+
+
+def summarize(src, area_id, now=None):
+    """What one source forecasts for an area from now on: peak, when, first elevated hour, hours elevated."""
+    doc = src.doc
+    if not doc or not doc.get("outlook") or area_id not in doc["outlook"]:
+        return None
+    now = now or datetime.now(timezone.utc)
+    vals, times = doc["outlook"][area_id], doc["times"]
+    rows = [(datetime.fromisoformat(t.replace("Z", "+00:00")), v) for t, v in zip(times, vals)]
+    rows = [(t, v) for t, v in rows if t >= now - timedelta(hours=1)]
+    if not rows:
+        return None
+    t_max, v_max = max(rows, key=lambda r: r[1])
+    elev = [t for t, v in rows if v >= SMOKE_ELEVATED]
+    return {"source": src.name, "label": src.label, "run": doc["run"], "max": v_max, "at": t_max.isoformat(),
+            "until": rows[-1][0].isoformat(), "first_elevated": elev[0].isoformat() if elev else None,
+            "hours_elevated": len(elev),
+            "level": "high" if v_max >= SMOKE_HIGH else "elevated" if v_max >= SMOKE_ELEVATED else
+                     "some" if v_max >= SMOKE_NOTE else "none"}
+
+
+def area_outlook(area_id, sources):
+    return {"elevated": SMOKE_ELEVATED, "high": SMOKE_HIGH,
+            "sources": [x for x in (summarize(s, area_id) for s in sources) if x]}
+
+
+class SmokeWatch:
+    """Push once when an area's smoke forecast turns elevated in any source; re-arms when no source shows it."""
+
+    def __init__(self, data_dir, notify, areas_fn, tz):
+        self.file = Path(data_dir) / "smoke_alert_state.json"
+        self.notify, self.areas_fn, self.tz = notify, areas_fn, tz
+        self.sources = []  # set by the app once the sources exist
+        self._lock = threading.Lock()
+        try:
+            self.active = {k.split("|")[0] for k in json.loads(self.file.read_text())}
+        except Exception:
+            self.active = set()
+
+    def check(self, _src=None):
+        fired = []
+        with self._lock:
+            for a in self.areas_fn():
+                sums = [x for x in (summarize(s, a["id"]) for s in self.sources) if x and x["first_elevated"]]
+                if sums:
+                    if a["id"] not in self.active:
+                        self.active.add(a["id"])
+                        fired.append((a, max(sums, key=lambda x: x["max"]), sums))
+                else:
+                    self.active.discard(a["id"])
+            try:
+                self.file.write_text(json.dumps(sorted(self.active)))
+            except Exception as e:
+                log.warning("could not save smoke alert state: %s", e)
+        for a, sm, sums in fired:
+            first = min(datetime.fromisoformat(x["first_elevated"]) for x in sums).astimezone(self.tz)
+            peak = datetime.fromisoformat(sm["at"]).astimezone(self.tz)
+            others = "; ".join(f"{x['label']} {x['max']:g}" for x in sums if x is not sm)
+            text = (f"Near-ground PM2.5 of {SMOKE_ELEVATED:g} µg/m³ or more forecast from {first:%a %H:%M}, peaking near "
+                    f"{sm['max']:g} µg/m³ {peak:%a %H:%M} ({sm['label']}{'; also ' + others if others else ''}). "
+                    f"Model guidance, not a measurement.")
+            try:
+                self.notify(a, {"name": "Smoke forecast: elevated PM2.5", "text": text})
+            except Exception:
+                log.exception("smoke alert for %s failed", a["id"])
+            log.warning("SMOKE ALERT %s: peak %s (%s)", a["id"], sm["max"], sm["source"])

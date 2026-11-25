@@ -186,7 +186,7 @@
       <td>${arrow(d.wd)} ${r0(d.ws_max)}${d.gust_max != null ? `<span class="s">, gusts ${r0(d.gust_max)}</span>` : ""}</td>
       <td>${r0(d.rh_min)}<span class="s">%</span></td>
       <td>${d.fwi_peak != null ? `<b>${r0(d.fwi_peak)}</b>` : "–"}</td></tr>`).join("");
-    return `<div class="units">Next 24 h · temperature °C · wind km/h · precipitation mm</div>
+    return `${smokeLine()}<div class="units">Next 24 h · temperature °C · wind km/h · precipitation mm</div>
       <div class="hours" aria-label="Next 24 hours">${cells.join("")}</div>
       <table class="days"><thead><tr><th>Day</th><th></th><th>High / low °C</th><th title="Total for the day, water equivalent: snow counted as melted water">Precip mm</th><th>Wind km/h</th><th>Min RH</th><th title="Highest hourly FWI calculated by FWX from this forecast; not an official CWFIS value">Peak FWI <span class="calc">calc.</span></th></tr></thead>
       <tbody>${rows}</tbody></table>
@@ -195,6 +195,21 @@
   }
 
   // ---- tab 2: fire weather meteograms ---------------------------------------------------------------
+  // smoke outlook from the plume model and BlueSky (see smoke.py): the worst source, in one line
+  function smokeLine() {
+    const S = DATA.smoke;
+    if (!S || !S.sources?.length) return "";
+    const tz = DATA.weather?.timezone;
+    const when = (iso) => new Date(iso).toLocaleString("en-CA", { weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: tz || undefined });
+    const top = S.sources.slice().sort((a, b) => b.max - a.max)[0];
+    const names = S.sources.map((x) => x.label).join(" and ");
+    if (top.level === "none") return `<div class="smk none">Smoke: nothing notable forecast near the ground (${esc(names)})</div>`;
+    const first = top.first_elevated ? ` from ${when(top.first_elevated)}` : "";
+    const head = top.level === "high" ? "High smoke forecast" : top.level === "elevated" ? "Elevated smoke forecast" : "Some smoke forecast";
+    return `<div class="smk ${top.level}"><b>${head}</b>${first}: PM2.5 up to ${r0(top.max)} µg/m³ near the ground, peak ${when(top.at)}
+      <span class="s">· ${esc(top.label)}${S.sources.length > 1 ? `; ${esc(S.sources.filter((x) => x !== top).map((x) => `${x.label} ${r0(x.max)}`).join("; "))}` : ""} · model guidance</span></div>`;
+  }
+
   function fireTab() {
     if (!DATA.weather) return err("weather");
     return `<div class="ident calc">Calculated hourly by FWX from the ${esc(DATA.weather.model)} forecast · not an official CWFIS product</div>

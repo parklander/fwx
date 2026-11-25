@@ -91,7 +91,7 @@
       areaId = $("area").value;
       try { localStorage.setItem("fwx-range-aoi", areaId); } catch (_) {}
       const u = new URL(location.href); u.searchParams.set("aoi", areaId); history.replaceState(null, "", u);
-      render(); loadWx(); loadLog(); loadFires();
+      render(); loadWx(); loadLog(); loadFires(); loadSmoke();
     };
   }
 
@@ -309,11 +309,31 @@
       <div class="fnote">${esc(notes.join(" "))}</div>`;
   }
 
+  // ---- smoke outlook for the area ---------------------------------------------------------------------
+  async function loadSmoke() {
+    if (!areaId) return;
+    let j;
+    try { j = await (await fetch(`/api/smoke/area/${encodeURIComponent(areaId)}`, { cache: "no-store" })).json(); }
+    catch (_) { $("smokeBody").textContent = "Smoke forecast unavailable."; return; }
+    const card = $("smokeCard");
+    card.classList.remove("elevated", "high");
+    if (!j.sources?.length) { $("smokeBody").textContent = "No smoke forecast available right now."; return; }
+    const top = j.sources.slice().sort((a, b) => b.max - a.max)[0];
+    if (top.level === "high" || top.level === "elevated") card.classList.add(top.level);
+    const head = top.level === "high" ? "HIGH SMOKE FORECAST" : top.level === "elevated" ? "ELEVATED SMOKE FORECAST"
+      : top.level === "some" ? "Some smoke forecast" : "No notable smoke forecast";
+    $("smokeBody").innerHTML = `<b class="${top.level}">${head}</b>`
+      + (top.level !== "none" ? ` · up to ${Math.round(top.max)} µg/m³, peak ${esc(when(top.at))}${top.first_elevated ? `, elevated from ${esc(when(top.first_elevated))}` : ""}` : "")
+      + `<div class="src">${j.sources.map((x) => `${esc(x.label)}: peak ${Math.round(x.max)} µg/m³${x.hours_elevated ? ` · ${x.hours_elevated} h at ${j.elevated}+` : ""}`).join(" · ")}`
+      + ` · elevated = ${j.elevated} µg/m³ or more</div>`;
+  }
+
   // ---- go ------------------------------------------------------------------------------------------
   (async () => {
     try { await loadAreas(); } catch (_) {}
-    loadAlerts(); loadWx(); loadLog(); loadFires();
+    loadAlerts(); loadWx(); loadLog(); loadFires(); loadSmoke();
     setInterval(loadAlerts, ALERT_EVERY);
+    setInterval(loadSmoke, 10 * 60e3);
     setInterval(loadFires, 5 * 60e3);
     setInterval(() => { loadWx(); loadLog(); }, WX_EVERY);
     setInterval(loadLog, ALERT_EVERY);

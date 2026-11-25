@@ -285,3 +285,11 @@ body.settings-open #controls { display: block; }
 .pmkey i { display: block; width: 26px; height: 9px; border: 1px solid rgba(0, 0, 0, 0.15); }
 .pmkey em { font-style: normal; font-size: 11px; color: #3c444c; margin-left: 4px; }
 #wb-sk .fine { font-size: 11px; color: #5b6670; margin-top: 2px; }
+
+/* smoke outlook line on the Forecast tab */
+.smk { font-size: 13px; padding: 6px 9px; border-radius: 5px; margin: 2px 0 8px; border-left: 4px solid #8a959f; background: #f3f5f7; color: #2f363d; }
+.smk.some { border-left-color: #c7b27a; background: #faf6ea; }
+.smk.elevated { border-left-color: #d9822f; background: #fff1e3; color: #6a3500; }
+.smk.high { border-left-color: #b52d2a; background: #fdecea; color: #7a1414; }
+.smk.none { font-size: 12px; }
+.smk .s { color: #3c444c; font-size: 12px; }

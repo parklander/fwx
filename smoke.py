@@ -2,8 +2,9 @@
 EER wildland fire smoke plume forecast (MLDP).
 
 FireWork comes ready-made as a time-enabled GeoMet WMS layer, like the snow layers: the page only needs the
-layer name and its current time window. The exact surface PM2.5 layer name isn't documented on the product
-page, so the first of CANDIDATES that GeoMet lists is used.
+layer name and its current time window. The FireWork forecast now runs inside the operational RAQDPS (the
+RAQDPS-FW layers left on GeoMet are historical averages), as RAQDPS.Sfc_PM2.5-WildfireSmokePlume: hourly,
+72 h, runs at 00 and 12 UTC. The first of CANDIDATES that GeoMet lists is used.
 https://eccc-msc.github.io/open-data/msc-data/nwp_raqdps-fw/readme_raqdps-fw_en/
 Data Source: Environment and Climate Change Canada.
 
@@ -53,11 +54,9 @@ _session.headers["User-Agent"] = "fwx (fire weather for CAF ranges)"
 
 # ---- FireWork (GeoMet WMS) ---------------------------------------------------------------------------
 WMS = snowdepth.WMS
-CANDIDATES = [  # surface PM2.5 first; the column smoke total as a last resort
-    ("RAQDPS-FW.SFC_PM2.5", "Surface PM2.5"),
-    ("RAQDPS-FW.SFC_PM2.5-DIFF", "Surface PM2.5 from wildfires"),
-    ("RAQDPS.SFC_PM2.5-WildfireSmokePlume", "Surface PM2.5 from wildfire smoke"),
-    ("RAQDPS-FW.EATM_PM2.5-DIFF", "Wildfire PM2.5, whole air column"),
+CANDIDATES = [  # (layer, title, style); FireWork's forecast now runs inside RAQDPS (checked on GeoMet, Nov 2026)
+    ("RAQDPS.Sfc_PM2.5-WildfireSmokePlume", "Surface PM2.5 from wildfire smoke", "PM2.5_0to500ugm3_Dis"),
+    ("RAQDPS.SFC_PM2.5", "Surface PM2.5, all sources", "PM2.5_0to500ugm3_Dis"),
 ]
 FW_STALE_H = 30  # runs are 00 and 12 UTC
 _fw_lock = threading.Lock()
@@ -70,7 +69,7 @@ def firework(max_age=600):
         if time.time() - _fw["at"] < max_age and _fw["spec"]:
             return _fw["spec"]
     spec = None
-    for name, title in CANDIDATES:
+    for name, title, style in CANDIDATES:
         try:
             r = _session.get(WMS, params={"service": "WMS", "version": "1.3.0", "request": "GetCapabilities",
                                           "layer": name}, timeout=30)
@@ -82,7 +81,7 @@ def firework(max_age=600):
                 continue
             run = ref[1] if ref else None
             stale = bool(run) and datetime.now(timezone.utc) - snowdepth._t(run) > timedelta(hours=FW_STALE_H)
-            spec = {"layer": name, "title": title, "start": t[0], "end": t[1], "step": t[2], "run": run, "stale": stale}
+            spec = {"layer": name, "title": title, "style": style, "start": t[0], "end": t[1], "step": t[2], "run": run, "stale": stale}
             break
         except Exception as e:
             log.warning("FireWork layer %s: %s", name, e)

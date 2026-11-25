@@ -814,14 +814,14 @@
       const time = isoHour(new Date(t)), off = Math.abs(t - want.getTime()) >= 36e5;
       if (!smokeWms || smokeWms.options.layers !== F.layer) {
         if (smokeWms) map.removeLayer(smokeWms);
-        smokeWms = L.tileLayer.wms(SMOKE.wms, { layers: F.layer, format: "image/png", transparent: true, version: "1.3.0", time,
+        smokeWms = L.tileLayer.wms(SMOKE.wms, { layers: F.layer, styles: F.style || "", format: "image/png", transparent: true, version: "1.3.0", time,
           opacity: 0.75, pane: "smoke", attribution: "FireWork smoke: Data Source: Environment and Climate Change Canada" }).addTo(map);
       } else if (smokeWms.wmsParams.time !== time) smokeWms.setParams({ time });
       const run = F.run ? `${F.run.slice(11, 13)}Z ${F.run.slice(8, 10)}/${F.run.slice(5, 7)}` : "";
-      key.innerHTML = `<div><b>Smoke · FireWork (ECCC)</b> ${esc(F.title)} · ${esc(fmtT(time))}${run ? ` · run ${run}` : ""}</div>`
+      key.innerHTML = `<div><b>Smoke · FireWork (ECCC RAQDPS)</b> ${esc(F.title)} · ${esc(fmtT(time))}${run ? ` · run ${run}` : ""}</div>`
         + (off ? `<div class="warn">FireWork doesn't cover the hour on the bar; showing its nearest hour.</div>` : "")
         + (F.stale ? `<div class="warn">ECCC hasn't updated FireWork since the ${run} run.</div>` : "")
-        + `<img alt="" onerror="this.remove()" src="${SMOKE.wms}?service=WMS&version=1.3.0&request=GetLegendGraphic&sld_version=1.1.0&format=image/png&layer=${encodeURIComponent(F.layer)}">`;
+        + `<img alt="" onerror="this.remove()" src="${SMOKE.wms}?service=WMS&version=1.3.0&request=GetLegendGraphic&sld_version=1.1.0&format=image/png&layer=${encodeURIComponent(F.layer)}${F.style ? `&STYLE=${encodeURIComponent(F.style)}` : ""}">`;
       return;
     }
     if (v === "eer") {

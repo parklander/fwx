@@ -45,6 +45,7 @@ pusher = push.Push(DATA)
 wx_alerts = alerts.Alerts(AOI_FILE, DATA / "alerts_state.json", on_new=pusher.notify_alert)
 rdps_maps = rdps.Rdps(DATA)
 bluesky = smoke.BlueSky(DATA)
+eer_plume = smoke.Eer(DATA)
 
 
 def _fire_push(area, hotspots):
@@ -72,6 +73,7 @@ async def lifespan(app):
         threading.Thread(target=rdps_maps.loop, args=(_stop,), name="rdps", daemon=True).start()
     if os.environ.get("FW_SMOKE", "1") != "0":
         threading.Thread(target=bluesky.loop, args=(_stop,), name="bluesky", daemon=True).start()
+        threading.Thread(target=eer_plume.loop, args=(_stop,), name="eer", daemon=True).start()
     yield
     _stop.set()
 
@@ -190,7 +192,7 @@ async def area_panel(aoi: str):
 @app.get("/api/smoke")
 async def smoke_meta():
     return {"wms": smoke.WMS, "firework": await run_in_threadpool(smoke.firework), "bluesky": bluesky.meta(),
-            "bins": smoke.PM_BINS}
+            "eer": eer_plume.meta(), "bins": smoke.PM_BINS}
 
 
 @app.get("/api/smoke/bluesky/{run}/{i}.png")
@@ -201,6 +203,16 @@ def bluesky_frame(run: str, i: int):
     if not p.exists():
         raise HTTPException(404, "no such hour")
     return FileResponse(p, media_type="image/png", headers={"Cache-Control": "public, max-age=86400, immutable"})
+
+
+@app.get("/api/smoke/eer/{run}/{i}.json")
+def eer_frame(run: str, i: int):
+    if not re.fullmatch(r"\d{12}", run):
+        raise HTTPException(404)
+    p = eer_plume.path(run, i)
+    if not p.exists():
+        raise HTTPException(404, "no such hour")
+    return FileResponse(p, media_type="application/json", headers={"Cache-Control": "public, max-age=86400, immutable"})
 
 
 @app.get("/api/rdps")

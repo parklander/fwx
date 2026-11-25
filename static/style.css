@@ -284,3 +284,4 @@ body.settings-open #controls { display: block; }
 .pmkey span { display: inline-flex; flex-direction: column; align-items: center; font-size: 10.5px; color: #3c444c; min-width: 26px; }
 .pmkey i { display: block; width: 26px; height: 9px; border: 1px solid rgba(0, 0, 0, 0.15); }
 .pmkey em { font-style: normal; font-size: 11px; color: #3c444c; margin-left: 4px; }
+#wb-sk .fine { font-size: 11px; color: #5b6670; margin-top: 2px; }

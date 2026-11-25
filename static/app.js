@@ -749,6 +749,38 @@
   map.getPane("smoke").style.pointerEvents = "none";
   const smokeOn = () => $("smoke").value !== "off";
   let SMOKE = null, smokeWms = null, smokeImg = null, smokeTimer = null;
+  // EER plume: filled contour bands of near-ground PM2.5, one canvas layer redrawn per hour
+  const smokeCanvas = L.canvas({ pane: "smoke", padding: 0.2 });
+  const plumeLayer = L.layerGroup();
+  const PLUME_COL = { 5: "#cfe0ee", 10: "#a9c9e2", 25: "#d2c38a", 35: "#d9a54a", 50: "#d9822f", 75: "#d0582a",
+    100: "#b52d2a", 200: "#8a1f4a", 300: "#5e1550", 500: "#3a0a3a" };
+  const plumeCache = new Map();
+  const PLUME_ATTR = 'Smoke plume: <a href="https://eer.cmc.ec.gc.ca/mandats/AutoSim/Fire/" target="_blank" rel="noopener">ECCC EER</a>';
+  let plumeShown = null;
+  function plumeFrame(run, i) {
+    const k = `${run}/${i}`;
+    if (!plumeCache.has(k)) {
+      plumeCache.set(k, fetch(`/api/smoke/eer/${run}/${i}.json`).then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); })
+        .catch((e) => { plumeCache.delete(k); throw e; }));
+      while (plumeCache.size > 12) plumeCache.delete(plumeCache.keys().next().value);
+    }
+    return plumeCache.get(k);
+  }
+  async function drawPlume(run, i) {
+    const k = `${run}/${i}`;
+    if (plumeShown === k && map.hasLayer(plumeLayer)) return;
+    let levels;
+    try { levels = await plumeFrame(run, i); } catch (_) { return; }
+    if ($("smoke").value !== "eer") return;
+    plumeShown = k;
+    plumeLayer.clearLayers();
+    for (const L0 of levels) {  // lowest level first; each band's rings filled even-odd, so holes stay open
+      const col = PLUME_COL[L0.level] || "#5e1550";
+      L.polygon(L0.rings.map((r) => r.map(([x, y]) => [y, x])), { renderer: smokeCanvas, interactive: false,
+        stroke: true, weight: 0.6, color: col, opacity: 0.9, fillColor: col, fillOpacity: L0.level >= 25 ? 0.55 : 0.35 }).addTo(plumeLayer);
+    }
+    if (!map.hasLayer(plumeLayer)) { plumeLayer.addTo(map); map.attributionControl.addAttribution(PLUME_ATTR); }
+  }
   async function loadSmoke() {
     try { SMOKE = await (await fetch("/api/smoke", { cache: "no-store" })).json(); } catch (_) { SMOKE = { failed: true }; }
     showSmoke();
@@ -757,7 +789,16 @@
   function clearSmoke(which) {
     if (which !== "firework" && smokeWms) { map.removeLayer(smokeWms); smokeWms = null; }
     if (which !== "bluesky" && smokeImg) { map.removeLayer(smokeImg); smokeImg = null; }
+    if (which !== "eer" && map.hasLayer(plumeLayer)) {
+      map.removeLayer(plumeLayer); plumeLayer.clearLayers(); plumeShown = null; map.attributionControl.removeAttribution(PLUME_ATTR);
+    }
   }
+  const nearestIdx = (times, want) => {
+    const ts = times.map((t) => Date.parse(t.replace("Z", ":00Z")));
+    let i = 0;
+    ts.forEach((t, k) => { if (Math.abs(t - want) < Math.abs(ts[i] - want)) i = k; });
+    return [i, ts[i], Math.abs(ts[i] - want) > 90 * 60e3];
+  };
   const pmKey = (bins) => `<div class="pmkey">${bins.map(([v, c, a]) => `<span><i style="background:${c};opacity:${Math.max(a, 0.55)}"></i>${v}</span>`).join("")}<em>µg/m³</em></div>`;
   function showSmoke() {
     const v = $("smoke").value, key = $("wb-sk");
@@ -783,6 +824,25 @@
         + `<img alt="" onerror="this.remove()" src="${SMOKE.wms}?service=WMS&version=1.3.0&request=GetLegendGraphic&sld_version=1.1.0&format=image/png&layer=${encodeURIComponent(F.layer)}">`;
       return;
     }
+    if (v === "eer") {
+      const E = SMOKE.eer || {};
+      if (!E.times?.length) {
+        clearSmoke();
+        key.innerHTML = `<b>Smoke · ECCC EER plume model</b> ${esc(E.error || (SMOKE.failed ? "Couldn't reach FWX for the smoke forecast." : "No plume forecast yet."))}`;
+        return;
+      }
+      const [i, t, off] = nearestIdx(E.times, want);
+      drawPlume(E.run, i);
+      if (i + 1 < E.times.length) plumeFrame(E.run, i + 1).catch(() => {});  // the next hour, ready for play
+      const lv = (E.levels || Object.keys(PLUME_COL).map(Number));
+      key.innerHTML = `<div><b>Smoke · ECCC EER plume model</b> near-ground PM2.5 (MLDP, experimental) · ${esc(fmtT(new Date(t).toISOString()))}</div>`
+        + (E.ended ? `<div class="warn">The latest plume run has ended; no newer run has been published.</div>`
+          : off ? `<div class="warn">The plume run doesn't cover the hour on the bar; showing its nearest hour.</div>` : "")
+        + (E.stale && !E.ended ? `<div class="warn">This plume run is more than 18 h old.</div>` : "")
+        + pmKey(lv.map((l) => [l, PLUME_COL[l], l >= 25 ? 0.75 : 0.55]))
+        + `<div class="fine">For guidance, planning and prevention only (ECCC). Bands are 1-hour mean PM2.5 from the surface to 250 m.</div>`;
+      return;
+    }
     const B = SMOKE.bluesky || {};
     if (!B.times?.length) {
       clearSmoke();
@@ -805,7 +865,7 @@
       + (B.stale && !B.ended ? `<div class="warn">This BlueSky run is more than a day old.</div>` : "")
       + pmKey(SMOKE.bins || []);
   }
-  $("smoke").value = ["firework", "bluesky"].includes(prefs.smoke) ? prefs.smoke : "off";
+  $("smoke").value = ["firework", "bluesky", "eer"].includes(prefs.smoke) ? prefs.smoke : "off";
   $("smoke").onchange = () => {
     save();
     if (smokeOn() && !SMOKE) loadSmoke();

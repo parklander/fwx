@@ -1,4 +1,5 @@
-"""Smoke forecasts for the map: ECCC FireWork (RAQDPS-FW) and BlueSky Canada (firesmoke.ca).
+"""Smoke forecasts for the map: ECCC FireWork (RAQDPS-FW), BlueSky Canada (firesmoke.ca) and the ECCC
+EER wildland fire smoke plume forecast (MLDP).
 
 FireWork comes ready-made as a time-enabled GeoMet WMS layer, like the snow layers: the page only needs the
 layer name and its current time window. The exact surface PM2.5 layer name isn't documented on the product
@@ -15,10 +16,25 @@ deleted again to keep the disk small:
 The file follows the Models-3 IOAPI layout (PM25[TSTEP, LAY, ROW, COL], TFLAG, XORIG/YORIG/XCELL/YCELL,
 rows south to north). A plain lat/lon netCDF is read too. BlueSky forecasts run April to September; out of
 season there may be no current file. (c) BlueSky Canada.
+
+The ECCC Environmental Emergency Response (EER) section runs MLDP, a Lagrangian dispersion model, from active
+fires on HRDPS weather at 00, 06, 12 and 18 UTC, and publishes 48 hourly shapefiles per domain:
+    https://eer.cmc.ec.gc.ca/mandats/AutoSim/Fire/latest/Canada/latest/shp/shp_Canada.zip
+      shp_Canada_YYYYMMDD-HHMM/shp_Canada_YYYYMMDD-HHMM.{shp,dbf,prj,shx}    (UTC, WGS84)
+Each hour holds closed contour rings (PolyLine records) of near-ground PM2.5 (surface to 250 m, 1-hour mean),
+one record per level: 5, 10, 25, 35, 50, 75, 100, 200, 300, 500 µg/m³ (dbf field "Interval"); an empty level is
+a null record. The zip is read when it changes and each hour saved as compact JSON:
+    data/eer/<run>/<i>.json  = [{"level": 25, "rings": [[[lon, lat], ...], ...]}, ...]
+Experimental, "for guidance, planning and prevention purposes only".
+https://eer.cmc.ec.gc.ca/mandats/AutoSim/Fire/doc_EN.html
 """
+import io
 import json
 import logging
 import math
+import re
+import struct
+import zipfile
 import shutil
 import threading
 import time
@@ -241,5 +257,151 @@ class BlueSky:
         with self._lock:
             self.doc, self.status, self.error = doc, "ok", None
         for d in self.dir.iterdir():  # keep only the newest run
+            if d.is_dir() and d.name != run:
+                shutil.rmtree(d, ignore_errors=True)
+
+
+# ---- ECCC EER smoke plume (MLDP) shapefile contours ------------------------------------------------------
+EER_DOMAIN = "Canada"
+EER_URL = "https://eer.cmc.ec.gc.ca/mandats/AutoSim/Fire/latest/{d}/latest/shp/shp_{d}.zip"
+EER_EVERY_MIN = 20
+EER_MAX_BYTES = 200e6
+EER_LEVELS = [5, 10, 25, 35, 50, 75, 100, 200, 300, 500]
+EER_STALE_H = 18  # four runs a day
+
+
+def read_dbf(b):
+    """Records of a dBASE file as dicts of stripped strings."""
+    n, hlen, rlen = struct.unpack("<IHH", b[4:12])
+    fields, o = [], 32
+    while b[o] != 0x0D:
+        name = b[o:o + 11].split(b"\0")[0].decode("latin1")
+        fields.append((name, b[o + 16]))
+        o += 32
+    out = []
+    for r in range(n):
+        p, rec = hlen + r * rlen + 1, {}
+        for name, ln in fields:
+            rec[name] = b[p:p + ln].decode("latin1").strip()
+            p += ln
+        out.append(rec)
+    return out
+
+
+def read_shp_rings(b, ndigits=3):
+    """[[ring, ...] per record] from a PolyLine/Polygon shapefile; [] for a null record."""
+    flen = struct.unpack(">i", b[24:28])[0] * 2
+    out, o = [], 100
+    while o + 12 <= min(flen, len(b)):
+        _, clen = struct.unpack(">ii", b[o:o + 8])
+        t = struct.unpack("<i", b[o + 8:o + 12])[0]
+        rings = []
+        if t in (3, 5, 13, 15, 23, 25):
+            np_, npt = struct.unpack("<ii", b[o + 44:o + 52])
+            parts = list(struct.unpack(f"<{np_}i", b[o + 52:o + 52 + 4 * np_])) + [npt]
+            pts = np.frombuffer(b, dtype="<f8", count=2 * npt, offset=o + 52 + 4 * np_).reshape(-1, 2)
+            for k in range(np_):
+                ring = np.round(pts[parts[k]:parts[k + 1]], ndigits)
+                if len(ring) >= 4:
+                    rings.append(ring.tolist())
+        out.append(rings)
+        o += 8 + clen * 2
+    return out
+
+
+def eer_frames(zbytes):
+    """[(time "YYYY-MM-DDTHH:MMZ", [{"level", "rings"}]), ...] from an EER shapefile zip, in time order."""
+    with zipfile.ZipFile(io.BytesIO(zbytes)) as z:
+        names = z.namelist()
+        hours = sorted({m.group(1) for n in names if (m := re.search(r"_(\d{8}-\d{4})/[^/]+\.shp$", n, re.I))})
+        out = []
+        for h in hours:
+            base = next(n[:-4] for n in names if n.lower().endswith(".shp") and f"_{h}/" in n)
+            recs = read_dbf(z.read(base + ".dbf"))
+            rings = read_shp_rings(z.read(base + ".shp"))
+            levels = []
+            for rec, rr in zip(recs, rings):
+                if rr:
+                    try:
+                        levels.append({"level": float(rec.get("Interval") or "nan"), "rings": rr})
+                    except ValueError:
+                        pass
+            levels.sort(key=lambda x: x["level"])
+            t = datetime.strptime(h, "%Y%m%d-%H%M").strftime("%Y-%m-%dT%H:%MZ")
+            out.append((t, levels))
+        return out
+
+
+class Eer:
+    def __init__(self, data_dir, domain=EER_DOMAIN):
+        self.domain = domain
+        self.dir = Path(data_dir) / "eer"
+        self.dir.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
+        self.doc, self.status, self.error, self.checked = None, "starting", None, None
+        for d in sorted(self.dir.iterdir(), reverse=True):
+            m = d / "manifest.json"
+            if d.is_dir() and m.exists():
+                try:
+                    self.doc, self.status = json.loads(m.read_text()), "ok"
+                    break
+                except ValueError:
+                    pass
+
+    def meta(self):
+        with self._lock:
+            out = {"status": self.status, "error": self.error, "checked": self.checked, "domain": self.domain,
+                   "levels": EER_LEVELS}
+            doc = dict(self.doc) if self.doc else None
+        if doc:
+            first = datetime.fromisoformat(doc["times"][0].replace("Z", "+00:00"))
+            last = datetime.fromisoformat(doc["times"][-1].replace("Z", "+00:00"))
+            doc["stale"] = datetime.now(timezone.utc) - first > timedelta(hours=EER_STALE_H)
+            doc["ended"] = last < datetime.now(timezone.utc)
+            out.update(doc)
+        return out
+
+    def path(self, run, i):
+        return self.dir / run / f"{i}.json"
+
+    def loop(self, stop):
+        while not stop.is_set():
+            try:
+                self.update()
+            except Exception as e:
+                log.exception("EER plume update failed")
+                with self._lock:
+                    self.status, self.error = ("error" if not self.doc else self.status), str(e)[:200]
+            stop.wait(EER_EVERY_MIN * 60)
+
+    def update(self):
+        self.checked = datetime.now(timezone.utc).isoformat(timespec="seconds")
+        url = EER_URL.format(d=self.domain)
+        with _session.get(url, timeout=120, stream=True) as g:
+            g.raise_for_status()
+            stamp = g.headers.get("Last-Modified") or g.headers.get("ETag") or ""
+            with self._lock:
+                if self.doc and stamp and self.doc.get("stamp") == stamp:
+                    self.error = None
+                    return
+            buf = bytearray()
+            for chunk in g.iter_content(1 << 20):
+                buf += chunk
+                if len(buf) > EER_MAX_BYTES:
+                    raise ValueError("EER shapefile zip is larger than expected")
+        frames = eer_frames(bytes(buf))
+        if not frames:
+            raise ValueError("no hourly shapefiles in the EER zip")
+        run = frames[0][0].replace("-", "").replace(":", "").replace("T", "").rstrip("Z")  # YYYYMMDDHHMM, first hour
+        out = self.dir / run
+        out.mkdir(parents=True, exist_ok=True)
+        for i, (_, levels) in enumerate(frames):
+            (out / f"{i}.json").write_text(json.dumps(levels, separators=(",", ":")))
+        doc = {"run": run, "stamp": stamp, "times": [t for t, _ in frames], "kb": len(buf) // 1024}
+        (out / "manifest.json").write_text(json.dumps(doc))
+        log.info("EER plume (%s): %d hours from %s", self.domain, len(frames), frames[0][0])
+        with self._lock:
+            self.doc, self.status, self.error = doc, "ok", None
+        for d in self.dir.iterdir():
             if d.is_dir() and d.name != run:
                 shutil.rmtree(d, ignore_errors=True)

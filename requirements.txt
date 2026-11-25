@@ -8,3 +8,5 @@ reportlab
 tzdata
 pywebpush
 eccodes
+netCDF4
+pillow

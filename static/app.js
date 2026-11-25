@@ -6,7 +6,7 @@
   const iso = (d) => d.toISOString().slice(0, 10);
   const today = iso(new Date(Date.now() - new Date().getTimezoneOffset() * 60000));
   const prefs = (() => { try { return JSON.parse(localStorage.getItem("cwfis-prefs") || "{}"); } catch (_) { return {}; } })();
-  const save = () => { try { localStorage.setItem("cwfis-prefs", JSON.stringify({ aoi: $("aoi").value, layer: $("layer").value, wind: $("wind").value, precip: $("precip").value, basemap: $("basemap").value, fires: $("fires").value, repfires: $("repfires").value })); } catch (_) {} };
+  const save = () => { try { localStorage.setItem("cwfis-prefs", JSON.stringify({ aoi: $("aoi").value, layer: $("layer").value, wind: $("wind").value, precip: $("precip").value, basemap: $("basemap").value, fires: $("fires").value, repfires: $("repfires").value, smoke: $("smoke").value })); } catch (_) {} };
 
   const map = L.map("map", { zoomControl: true }).setView([55, -97], 4);
 
@@ -660,19 +660,21 @@
   ]);
 
   async function showRdps() {
-    const mode = $("wind").value, pOn = precipOn();
-    $("windbar").hidden = mode === "off" && !pOn;
+    const mode = $("wind").value, pOn = precipOn(), sOn = smokeOn();
+    $("windbar").hidden = mode === "off" && !pOn && !sOn;
     $("wb-pk").hidden = !pOn;
     if (pOn) (snowMode() ? drawSnowKey : drawPrecipKey)();
-    if (mode === "off" && !pOn) { stopPlay(); wind?.setMode("off"); if (pOverlay) drawPrecip(null); return; }
+    if (mode === "off" && !pOn) { wind?.setMode("off"); if (pOverlay) drawPrecip(null); }
+    if (mode === "off" && !pOn && !sOn) { stopPlay(); showSmoke(); return; }
     if (!WM?.run || !rdpsHours.length) {
-      $("wb-time").textContent = WM?.status === "error" ? "RDPS forecast unavailable right now"
+      $("wb-time").textContent = WM?.status === "error" ? "Hour bar unavailable: RDPS forecast down"
         : WM?.run ? "The RDPS forecast is out of date" : "RDPS forecast is still downloading…";
-      wind?.setFrames(null); return;
+      wind?.setFrames(null); showSmoke(); return;
     }
     if (wind.mode !== mode) wind.setMode(mode);
     const h = curHour(), run = WM.run;
     $("wb-time").textContent = hourLabel(h.t);
+    showSmoke();
     try {
       const [spd, dir, pq] = await framesFor(run, h);
       if (curHour() !== h) return;  // moved on while loading
@@ -738,7 +740,81 @@
   $("wb-prev").onclick = () => { stopPlay(); step(-1); };
   $("wb-next").onclick = () => { stopPlay(); step(1); };
   $("wb-hour").oninput = () => { stopPlay(); showRdps(); };
-  $("wb-close").onclick = () => { $("wind").value = "off"; $("precip").value = "off"; save(); showRdps(); };
+  $("wb-close").onclick = () => { $("wind").value = "off"; $("precip").value = "off"; $("smoke").value = "off"; save(); showRdps(); };
+
+  // ---- smoke: ECCC FireWork (GeoMet WMS) and BlueSky Canada (hourly PNGs made from its netCDF; see smoke.py) ----
+  // Both follow the hour bar; the hour nearest now when the bar has no RDPS hours yet.
+  map.createPane("smoke");
+  map.getPane("smoke").style.zIndex = 350;      // over the danger maps, under precipitation, labels and fires
+  map.getPane("smoke").style.pointerEvents = "none";
+  const smokeOn = () => $("smoke").value !== "off";
+  let SMOKE = null, smokeWms = null, smokeImg = null, smokeTimer = null;
+  async function loadSmoke() {
+    try { SMOKE = await (await fetch("/api/smoke", { cache: "no-store" })).json(); } catch (_) { SMOKE = { failed: true }; }
+    showSmoke();
+  }
+  const smokeWant = () => (rdpsHours.length && curHour() ? curHour().t : new Date(Math.round(Date.now() / 36e5) * 36e5));
+  function clearSmoke(which) {
+    if (which !== "firework" && smokeWms) { map.removeLayer(smokeWms); smokeWms = null; }
+    if (which !== "bluesky" && smokeImg) { map.removeLayer(smokeImg); smokeImg = null; }
+  }
+  const pmKey = (bins) => `<div class="pmkey">${bins.map(([v, c, a]) => `<span><i style="background:${c};opacity:${Math.max(a, 0.55)}"></i>${v}</span>`).join("")}<em>µg/m³</em></div>`;
+  function showSmoke() {
+    const v = $("smoke").value, key = $("wb-sk");
+    if (v === "off") { clearSmoke(); key.hidden = true; return; }
+    key.hidden = false;
+    clearSmoke(v);  // drop the other source's layer
+    if (!SMOKE) { key.textContent = "Smoke forecast: loading…"; return; }
+    const want = smokeWant();
+    if (v === "firework") {
+      const F = SMOKE.firework;
+      if (!F) { clearSmoke(); key.innerHTML = "<b>FireWork</b> smoke forecast is unavailable from ECCC GeoMet right now."; return; }
+      const t = Math.min(Math.max(want.getTime(), Date.parse(F.start)), Date.parse(F.end));
+      const time = isoHour(new Date(t)), off = Math.abs(t - want.getTime()) >= 36e5;
+      if (!smokeWms || smokeWms.options.layers !== F.layer) {
+        if (smokeWms) map.removeLayer(smokeWms);
+        smokeWms = L.tileLayer.wms(SMOKE.wms, { layers: F.layer, format: "image/png", transparent: true, version: "1.3.0", time,
+          opacity: 0.75, pane: "smoke", attribution: "FireWork smoke: Data Source: Environment and Climate Change Canada" }).addTo(map);
+      } else if (smokeWms.wmsParams.time !== time) smokeWms.setParams({ time });
+      const run = F.run ? `${F.run.slice(11, 13)}Z ${F.run.slice(8, 10)}/${F.run.slice(5, 7)}` : "";
+      key.innerHTML = `<div><b>Smoke · FireWork (ECCC)</b> ${esc(F.title)} · ${esc(fmtT(time))}${run ? ` · run ${run}` : ""}</div>`
+        + (off ? `<div class="warn">FireWork doesn't cover the hour on the bar; showing its nearest hour.</div>` : "")
+        + (F.stale ? `<div class="warn">ECCC hasn't updated FireWork since the ${run} run.</div>` : "")
+        + `<img alt="" onerror="this.remove()" src="${SMOKE.wms}?service=WMS&version=1.3.0&request=GetLegendGraphic&sld_version=1.1.0&format=image/png&layer=${encodeURIComponent(F.layer)}">`;
+      return;
+    }
+    const B = SMOKE.bluesky || {};
+    if (!B.times?.length) {
+      clearSmoke();
+      key.innerHTML = `<b>Smoke · BlueSky Canada</b> ${esc(B.error || (SMOKE.failed ? "Couldn't reach FWX for the smoke forecast." : "No BlueSky forecast yet."))}`;
+      return;
+    }
+    const ts = B.times.map((t) => Date.parse(t.replace("Z", ":00Z")));
+    let i = 0;
+    ts.forEach((t, k) => { if (Math.abs(t - want) < Math.abs(ts[i] - want)) i = k; });
+    const off = Math.abs(ts[i] - want) > 90 * 60e3;
+    const url = `/api/smoke/bluesky/${B.run}/${i}.png`, bb = B.bounds;
+    const bounds = [[bb.south, bb.west], [bb.north, bb.east]];
+    if (!smokeImg) smokeImg = L.imageOverlay(url, bounds, { pane: "smoke", opacity: 0.85,
+      attribution: 'Smoke: © <a href="https://firesmoke.ca" target="_blank" rel="noopener">BlueSky Canada</a>' }).addTo(map);
+    else { smokeImg.setUrl(url); smokeImg.setBounds(L.latLngBounds(bounds)); }
+    if (i + 1 < ts.length) new Image().src = `/api/smoke/bluesky/${B.run}/${i + 1}.png`;  // the next hour, ready for play
+    key.innerHTML = `<div><b>Smoke · BlueSky Canada</b> surface PM2.5 · ${esc(fmtT(new Date(ts[i]).toISOString()))}</div>`
+      + (B.ended ? `<div class="warn">This is the last BlueSky run; its forecast has ended. BlueSky runs April to September.</div>`
+        : off ? `<div class="warn">BlueSky doesn't cover the hour on the bar; showing its nearest hour.</div>` : "")
+      + (B.stale && !B.ended ? `<div class="warn">This BlueSky run is more than a day old.</div>` : "")
+      + pmKey(SMOKE.bins || []);
+  }
+  $("smoke").value = ["firework", "bluesky"].includes(prefs.smoke) ? prefs.smoke : "off";
+  $("smoke").onchange = () => {
+    save();
+    if (smokeOn() && !SMOKE) loadSmoke();
+    showRdps();
+    if (phone.matches) closeSettings();
+  };
+  clearInterval(smokeTimer);
+  smokeTimer = setInterval(() => { if (smokeOn()) loadSmoke(); }, 15 * 60e3);
+  if (smokeOn()) loadSmoke();
   // ---- fires: FIRMS satellite hotspots by age (Hotspots), and the CWFIS agency-reported fires (Reported fires) ----
   map.createPane("fires");
   map.getPane("fires").style.zIndex = 450;

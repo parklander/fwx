@@ -22,6 +22,7 @@ import alerts
 import cwfis
 import fires
 import goes
+import smoke
 import snowdepth
 import push
 import report_pdf
@@ -43,6 +44,7 @@ log = logging.getLogger("app")
 pusher = push.Push(DATA)
 wx_alerts = alerts.Alerts(AOI_FILE, DATA / "alerts_state.json", on_new=pusher.notify_alert)
 rdps_maps = rdps.Rdps(DATA)
+bluesky = smoke.BlueSky(DATA)
 
 
 def _fire_push(area, hotspots):
@@ -68,6 +70,8 @@ async def lifespan(app):
         threading.Thread(target=fire_data.loop, args=(_stop,), name="fires", daemon=True).start()
     if os.environ.get("FW_RDPS", os.environ.get("FW_WIND", "1")) != "0":
         threading.Thread(target=rdps_maps.loop, args=(_stop,), name="rdps", daemon=True).start()
+    if os.environ.get("FW_SMOKE", "1") != "0":
+        threading.Thread(target=bluesky.loop, args=(_stop,), name="bluesky", daemon=True).start()
     yield
     _stop.set()
 
@@ -180,6 +184,24 @@ async def area_panel(aoi: str):
 
 
 # ---- RDPS frames for the map overlays: 10 m wind, precipitation rate and type ------------------------------
+
+# ---- smoke forecasts: ECCC FireWork (GeoMet WMS) and BlueSky Canada (PNG frames from its netCDF) --------
+
+@app.get("/api/smoke")
+async def smoke_meta():
+    return {"wms": smoke.WMS, "firework": await run_in_threadpool(smoke.firework), "bluesky": bluesky.meta(),
+            "bins": smoke.PM_BINS}
+
+
+@app.get("/api/smoke/bluesky/{run}/{i}.png")
+def bluesky_frame(run: str, i: int):
+    if not re.fullmatch(r"\d{12}", run):
+        raise HTTPException(404)
+    p = bluesky.path(run, i)
+    if not p.exists():
+        raise HTTPException(404, "no such hour")
+    return FileResponse(p, media_type="image/png", headers={"Cache-Control": "public, max-age=86400, immutable"})
+
 
 @app.get("/api/rdps")
 def rdps_meta():

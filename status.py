@@ -25,8 +25,7 @@ RULES = {
     "rh_low": 25,                # %, with danger Moderate or above
     "hotspot_recent_h": 6,       # a hotspot inside the area this recent counts
 }
-# hourly FWI -> approximate danger class, for the timeline only (CWFIS classes are set regionally; the
-# official daily class from CWFIS is what the status uses)
+# FWI -> approximate class; kept for reference only. The timeline uses the CWFIS daily class.
 FWI_BANDS = [(5, "Low"), (10, "Moderate"), (20, "High"), (30, "Very High"), (float("inf"), "Extreme")]
 
 
@@ -56,23 +55,29 @@ def build(area, panel, alerts_area, fires_near, smoke_sources, now=None):
                       "until": until.isoformat() if isinstance(until, datetime) else until})
 
     # ---- official daily danger (CWFIS) -------------------------------------------------------------
+    # The status uses the class at the area's reference point, shown with that point's FWI. The worst cell in
+    # the area's box is a separate item with its own FWI: information when High, a Heightened item when Very
+    # High or Extreme (one hot cell at the edge of a large box shouldn't set the whole base's status).
     days = panel.get("fwi_days") or []
     today_d = days[0] if days else None
     danger_today = today_d.get("fdr_label") if today_d else None
-    worst_today = max([x for x in (danger_today, today_d.get("fdr_max_label") if today_d else None) if x],
-                      key=_rank, default=None)
-    if worst_today:
-        r = _rank(worst_today)
-        lvl = 2 if r >= 3 else 1 if r == 2 else 0
-        where = "" if worst_today == danger_today else " (worst part of the area)"
-        add(lvl, "danger", f"Fire danger {worst_today} today{where}",
-            f"CWFIS daily, FWI {today_d.get('fwi'):.0f}" if today_d.get("fwi") is not None else "CWFIS daily")
+    fwi_txt = lambda v: f"FWI {v:.0f}" if v is not None else "FWI not given"
+    if danger_today:
+        r = _rank(danger_today)
+        add(2 if r >= 3 else 1 if r == 2 else 0, "danger", f"Fire danger {danger_today} today",
+            f"CWFIS daily at the base, {fwi_txt(today_d.get('fwi'))}")
+    worst = today_d.get("fdr_max_label") if today_d else None
+    if worst and _rank(worst) > _rank(danger_today) and _rank(worst) >= 2:
+        add(1 if _rank(worst) >= 3 else 0, "danger", f"Worst part of the area: {worst}",
+            f"CWFIS daily, highest cell in the area box, {fwi_txt(today_d.get('fwi_max'))}")
     for d in days[1:3]:
-        lab = max([x for x in (d.get("fdr_label"), d.get("fdr_max_label")) if x], key=_rank, default=None)
-        if lab and _rank(lab) >= 3 and _rank(lab) > _rank(worst_today):
+        lab = d.get("fdr_label")
+        if lab and _rank(lab) >= 3 and _rank(lab) > _rank(danger_today):
             day = datetime.fromisoformat(d["date"])
-            add(1, "danger", f"Fire danger rising to {lab} {day:%A}", "CWFIS forecast", at=d["date"])
-    danger_r = _rank(worst_today)
+            add(1, "danger", f"Fire danger rising to {lab} {day:%A}", f"CWFIS forecast at the base, {fwi_txt(d.get('fwi'))}",
+                at=d["date"])
+    danger_r = _rank(danger_today)
+    worst_today = danger_today
 
     # ---- ECCC alerts --------------------------------------------------------------------------------
     for a in (alerts_area or {}).get("alerts", []):
@@ -130,6 +135,7 @@ def build(area, panel, alerts_area, fires_near, smoke_sources, now=None):
             for t, v in zip(doc["times"], doc["outlook"][area["id"]]):
                 k = datetime.fromisoformat(t.replace("Z", "+00:00")).strftime("%Y-%m-%dT%H")
                 smoke_by_hour[k] = max(smoke_by_hour.get(k, 0), v or 0)
+        day_class = {d.get("date", "")[:10]: d.get("fdr_label") for d in days if d.get("date")}
         tl = {
             "time": [t_utc[i].isoformat() for i in idx],
             "local": [h["time"][i] for i in idx],
@@ -137,7 +143,9 @@ def build(area, panel, alerts_area, fires_near, smoke_sources, now=None):
             "temp": [get("temp", i) for i in idx], "rh": [get("rh", i) for i in idx],
             "ws": [get("ws", i) for i in idx], "gust": [get("gust", i) for i in idx], "wd": [get("wd", i) for i in idx],
             "precip": [get("precip", i) for i in idx], "fwi": [get("fwi", i) for i in idx],
-            "danger": [_dclass(get("fwi", i)) for i in idx],
+            # the official CWFIS daily class for each hour's local day (not a class made from hourly FWI:
+            # hourly FWI peaks in the afternoon above the daily value the classes are defined on)
+            "danger": [day_class.get(h["time"][i][:10]) for i in idx],
             "smoke": [smoke_by_hour.get(t_utc[i].strftime("%Y-%m-%dT%H")) for i in idx],
             "shifts": [idx.index(i) for i in shifts if i in idx],
         }

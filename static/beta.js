@@ -1,7 +1,7 @@
 /* FWX beta: base status first (see the interface review, Nov 2026).
  *
  * One statement for the base (Normal / Heightened / High, from /api/status, draft rules), the items behind it,
- * and one 48 h timeline on a single time axis: approximate danger from the calculated hourly FWI, wind coloured
+ * and one 48 h timeline on a single time axis: the CWFIS daily danger class, the calculated hourly FWI, wind coloured
  * as on the map, gusts, RH, precipitation, smoke and alert periods. A small map shows the area and hotspots.
  * The main site holds the full map, burn windows and the PDF; links pass the base along (?aoi=).
  */
@@ -21,6 +21,11 @@
     [100, "#d0582a"], [200, "#b52d2a"], [Infinity, "#5e1550"]];
   const smokeCol = (v) => (v == null ? null : SMOKE.find(([t]) => v < t)[1]);
   const ALERT_COL = { warning: "#b3261e", watch: "#e07b00", statement: "#7b1fa2" };
+  // light tint behind temperatures: blue below 0 °C, clear around 10 °C, warming to red above 25 °C
+  // one-hue ramp for the hourly FWI number: no class colours, so it doesn't read as a danger rating
+  const fwiTint = (v) => `rgba(235,104,52,${Math.min(0.6, 0.06 + v / 50).toFixed(2)})`;
+  const tempTint = (t) => t < 0 ? `rgba(70,130,220,${Math.min(0.35, 0.1 + -t * 0.012)})`
+    : t < 10 ? "transparent" : `rgba(230,${Math.max(60, 170 - (t - 10) * 6)},40,${Math.min(0.4, 0.06 + (t - 10) * 0.018)})`;
   const COMPASS = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
   const compass = (d) => (d == null ? "" : COMPASS[Math.round((d % 360) / 45) % 8]);
 
@@ -127,9 +132,21 @@
 
     let html = `<div class="lab"></div>` + T.time.map((_, i) => cell(i,
       `${i === 0 ? "Now" : String(hr(i)).padStart(2, "0")}<span class="dn">${i === 0 || dayStart(i) ? fmt(T.time[i], { weekday: "short" }) : ""}</span>`, "hd")).join("");
-    html += row("Fire danger", "hourly, calc.", (i) => {
+    html += row("Fire danger", "CWFIS daily", (i) => {
       const d = T.danger[i];
       return cell(i, "", "", d ? `background:${DANGER[d]}` : "");
+    });
+    html += row("FWI", "hourly, calc.", (i) => {
+      const v = T.fwi[i];
+      return cell(i, v == null ? "" : Math.round(v), "", v == null ? "" : `background:${fwiTint(v)}`);
+    });
+    html += row("Temperature", "°C", (i) => {
+      const v = T.temp[i];
+      return cell(i, v == null ? "" : Math.round(v), "", v == null ? "" : `background:${tempTint(v)}`);
+    });
+    html += row("Humidity", "%", (i) => {
+      const v = T.rh[i];
+      return cell(i, v == null ? "" : Math.round(v), v != null && v <= S.rules.rh_low ? "rhlow" : "");
     });
     html += row("Wind", "km/h", (i) => {
       const s = T.ws[i], d = T.wd[i];
@@ -138,10 +155,6 @@
     html += row("Gusts", "km/h", (i) => {
       const g = T.gust[i];
       return cell(i, g == null ? "" : Math.round(g), g >= S.rules.gust_high ? "g2" : g >= S.rules.gust_heightened ? "g1" : "");
-    });
-    html += row("Humidity", "%", (i) => {
-      const v = T.rh[i];
-      return cell(i, v == null ? "" : Math.round(v), v != null && v <= S.rules.rh_low ? "rhlow" : "");
     });
     html += row("Precip", "mm", (i) => {
       const v = T.precip[i] || 0;
@@ -170,7 +183,8 @@
   function readout() {
     const T = S.timeline, i = sel;
     const parts = [`<b>${esc(i === 0 ? "Now" : dayHm(T.time[i]))}</b>`];
-    if (T.fwi[i] != null) parts.push(`FWI ${T.fwi[i].toFixed(0)} (${esc(T.danger[i])}, calc.)`);
+    if (T.danger[i]) parts.push(`fire danger ${esc(T.danger[i])} (CWFIS daily)`);
+    if (T.fwi[i] != null) parts.push(`FWI ${T.fwi[i].toFixed(0)} (hourly, calc.)`);
     if (T.ws[i] != null) parts.push(`wind ${compass(T.wd[i])} ${Math.round(T.ws[i])} km/h, gusts ${Math.round(T.gust[i] ?? T.ws[i])}`);
     if (T.rh[i] != null) parts.push(`RH ${Math.round(T.rh[i])}%`);
     if (T.temp[i] != null) parts.push(`${Math.round(T.temp[i])}°C`);

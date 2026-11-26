@@ -280,7 +280,8 @@ class BlueSky:
 
 # ---- ECCC EER smoke plume (MLDP) shapefile contours ------------------------------------------------------
 EER_DOMAIN = "Canada"
-EER_URL = "https://eer.cmc.ec.gc.ca/mandats/AutoSim/Fire/latest/{d}/latest/shp/shp_{d}.zip"
+# regional zips sit beside the national one, under latest/Canada/latest/shp/
+EER_URL = "https://eer.cmc.ec.gc.ca/mandats/AutoSim/Fire/latest/Canada/latest/shp/shp_{d}.zip"
 EER_EVERY_MIN = 20
 EER_MAX_BYTES = 200e6
 EER_LEVELS = [5, 10, 25, 35, 50, 75, 100, 200, 300, 500]
@@ -352,9 +353,12 @@ def eer_frames(zbytes):
 class Eer:
     name, label = "eer", "ECCC EER plume model"
 
-    def __init__(self, data_dir, domain=EER_DOMAIN, areas_fn=lambda: [], on_update=None):
+    def __init__(self, data_dir, domain=EER_DOMAIN, areas_fn=lambda: [], on_update=None, name=None):
+        """domain: "Canada" (national grid) or a regional run such as "MB_ON_South" (finer contours, same format)."""
         self.domain, self.areas_fn, self.on_update = domain, areas_fn, on_update
-        self.dir = Path(data_dir) / "eer"
+        if name:
+            self.name = name
+        self.dir = Path(data_dir) / ("eer" if domain == EER_DOMAIN else f"eer-{domain}")
         self.dir.mkdir(parents=True, exist_ok=True)
         self._lock = threading.Lock()
         self.doc, self.status, self.error, self.checked = None, "starting", None, None

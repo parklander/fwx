@@ -50,6 +50,9 @@ smoke_watch = smoke.SmokeWatch(DATA, pusher.notify_alert, _aoi_list, TZ)
 _smoke_hook = smoke_watch.check if os.environ.get("FW_SMOKE_PUSH", "1") != "0" else None
 bluesky = smoke.BlueSky(DATA, areas_fn=_aoi_list, on_update=_smoke_hook)
 eer_plume = smoke.Eer(DATA, areas_fn=_aoi_list, on_update=_smoke_hook)
+# regional EER run (finer contours), map layer only for now; FW_EER_REGION="" turns it off
+EER_REGION = os.environ.get("FW_EER_REGION", "MB_ON_South")
+eer_region = smoke.Eer(DATA, domain=EER_REGION, areas_fn=_aoi_list, name="eer_region") if EER_REGION else None
 smoke_watch.sources = [eer_plume, bluesky]
 
 
@@ -79,6 +82,8 @@ async def lifespan(app):
     if os.environ.get("FW_SMOKE", "1") != "0":
         threading.Thread(target=bluesky.loop, args=(_stop,), name="bluesky", daemon=True).start()
         threading.Thread(target=eer_plume.loop, args=(_stop,), name="eer", daemon=True).start()
+        if eer_region:
+            threading.Thread(target=eer_region.loop, args=(_stop,), name="eer_region", daemon=True).start()
     yield
     _stop.set()
 
@@ -216,7 +221,7 @@ async def area_status(aoi: str):
 @app.get("/api/smoke")
 async def smoke_meta():
     return {"wms": smoke.WMS, "firework": await run_in_threadpool(smoke.firework), "bluesky": bluesky.meta(),
-            "eer": eer_plume.meta(), "bins": smoke.PM_BINS}
+            "eer": eer_plume.meta(), "eer_region": eer_region.meta() if eer_region else None, "bins": smoke.PM_BINS}
 
 
 @app.get("/api/smoke/bluesky/{run}/{i}.png")
@@ -236,10 +241,11 @@ def smoke_area(aoi: str):
 
 
 @app.get("/api/smoke/eer/{run}/{i}.json")
-def eer_frame(run: str, i: int):
+def eer_frame(run: str, i: int, src: str = ""):
     if not re.fullmatch(r"\d{12}", run):
         raise HTTPException(404)
-    p = eer_plume.path(run, i)
+    plume = eer_region if src == "region" and eer_region else eer_plume
+    p = plume.path(run, i)
     if not p.exists():
         raise HTTPException(404, "no such hour")
     return FileResponse(p, media_type="application/json", headers={"Cache-Control": "public, max-age=86400, immutable"})

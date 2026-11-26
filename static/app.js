@@ -767,21 +767,22 @@
   const plumeCache = new Map();
   const PLUME_ATTR = 'Smoke plume: <a href="https://eer.cmc.ec.gc.ca/mandats/AutoSim/Fire/" target="_blank" rel="noopener">ECCC EER</a>';
   let plumeShown = null;
-  function plumeFrame(run, i) {
-    const k = `${run}/${i}`;
+  const isPlume = (v) => v === "eer" || v === "eer_region";
+  function plumeFrame(run, i, src = "eer") {
+    const k = `${src}/${run}/${i}`;
     if (!plumeCache.has(k)) {
-      plumeCache.set(k, fetch(`/api/smoke/eer/${run}/${i}.json`).then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); })
+      plumeCache.set(k, fetch(`/api/smoke/eer/${run}/${i}.json${src === "eer_region" ? "?src=region" : ""}`).then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); })
         .catch((e) => { plumeCache.delete(k); throw e; }));
       while (plumeCache.size > 12) plumeCache.delete(plumeCache.keys().next().value);
     }
     return plumeCache.get(k);
   }
-  async function drawPlume(run, i) {
-    const k = `${run}/${i}`;
+  async function drawPlume(run, i, src = "eer") {
+    const k = `${src}/${run}/${i}`;
     if (plumeShown === k && map.hasLayer(plumeLayer)) return;
     let levels;
-    try { levels = await plumeFrame(run, i); } catch (_) { return; }
-    if ($("smoke").value !== "eer") return;
+    try { levels = await plumeFrame(run, i, src); } catch (_) { return; }
+    if ($("smoke").value !== src) return;
     plumeShown = k;
     plumeLayer.clearLayers();
     for (const L0 of levels) {  // lowest level first; each band's rings filled even-odd, so holes stay open
@@ -799,7 +800,7 @@
   function clearSmoke(which) {
     if (which !== "firework" && smokeWms) { map.removeLayer(smokeWms); smokeWms = null; }
     if (which !== "bluesky" && smokeImg) { map.removeLayer(smokeImg); smokeImg = null; }
-    if (which !== "eer" && map.hasLayer(plumeLayer)) {
+    if (!isPlume(which) && map.hasLayer(plumeLayer)) {
       map.removeLayer(plumeLayer); plumeLayer.clearLayers(); plumeShown = null; map.attributionControl.removeAttribution(PLUME_ATTR);
     }
   }
@@ -834,18 +835,19 @@
         + `<img alt="" onerror="this.remove()" src="${SMOKE.wms}?service=WMS&version=1.3.0&request=GetLegendGraphic&sld_version=1.1.0&format=image/png&layer=${encodeURIComponent(F.layer)}${F.style ? `&STYLE=${encodeURIComponent(F.style)}` : ""}">`;
       return;
     }
-    if (v === "eer") {
-      const E = SMOKE.eer || {};
+    if (isPlume(v)) {
+      const E = SMOKE[v] || {};
+      const title = v === "eer_region" ? `ECCC EER plume model, regional${E.domain ? ` (${esc(E.domain.replace(/_/g, " "))})` : ""}` : "ECCC EER plume model";
       if (!E.times?.length) {
         clearSmoke();
-        key.innerHTML = `<b>Smoke · ECCC EER plume model</b> ${esc(E.error || (SMOKE.failed ? "Couldn't reach FWX for the smoke forecast." : "No plume forecast yet."))}`;
+        key.innerHTML = `<b>Smoke · ${title}</b> ${esc(E.error || (SMOKE.failed ? "Couldn't reach FWX for the smoke forecast." : SMOKE[v] === null ? "The regional run is turned off on this server." : "No plume forecast yet."))}`;
         return;
       }
       const [i, t, off] = nearestIdx(E.times, want);
-      drawPlume(E.run, i);
-      if (i + 1 < E.times.length) plumeFrame(E.run, i + 1).catch(() => {});  // the next hour, ready for play
+      drawPlume(E.run, i, v);
+      if (i + 1 < E.times.length) plumeFrame(E.run, i + 1, v).catch(() => {});  // the next hour, ready for play
       const lv = (E.levels || Object.keys(PLUME_COL).map(Number));
-      key.innerHTML = `<div><b>Smoke · ECCC EER plume model</b> near-ground PM2.5 (MLDP, experimental) · ${esc(fmtT(new Date(t).toISOString()))}</div>`
+      key.innerHTML = `<div><b>Smoke · ${title}</b> near-ground PM2.5 (MLDP, experimental) · ${esc(fmtT(new Date(t).toISOString()))}</div>`
         + (E.ended ? `<div class="warn">The latest plume run has ended; no newer run has been published.</div>`
           : off ? `<div class="warn">The plume run doesn't cover the hour on the bar; showing its nearest hour.</div>` : "")
         + (E.stale && !E.ended ? `<div class="warn">This plume run is more than 18 h old.</div>` : "")
@@ -875,7 +877,7 @@
       + (B.stale && !B.ended ? `<div class="warn">This BlueSky run is more than a day old.</div>` : "")
       + pmKey(SMOKE.bins || []);
   }
-  $("smoke").value = ["firework", "bluesky", "eer"].includes(prefs.smoke) ? prefs.smoke : "off";
+  $("smoke").value = ["firework", "bluesky", "eer", "eer_region"].includes(prefs.smoke) ? prefs.smoke : "off";
   $("smoke").onchange = () => {
     save();
     if (smokeOn() && !SMOKE) loadSmoke();

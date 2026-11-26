@@ -41,7 +41,8 @@
   let DATA = null, areaId = null, tab = "fc", range = 72, charts = [], cursor = null;
   let rxRange = 3, rxPick = null, rxEdit = false;
   try {
-    tab = localStorage.getItem("fwx-tab") || "fc"; range = +localStorage.getItem("fwx-range") || 72;
+    // ?tab=rx (etc.) in the link wins, e.g. from the beta page's "Burn windows"
+    tab = new URLSearchParams(location.search).get("tab") || localStorage.getItem("fwx-tab") || "fc"; range = +localStorage.getItem("fwx-range") || 72;
     rxRange = +localStorage.getItem("fwx-rx-range") || 3;
   } catch (_) {}
 

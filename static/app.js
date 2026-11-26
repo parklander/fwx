@@ -659,10 +659,20 @@
     precipOn() && !snowMode() && h.precip ? frame(run, "precip", h.fh) : null,
   ]);
 
+  // key for the speed-coloured arrows: one swatch per band, the band edges (km/h) under it
+  function drawWindKey() {
+    const R = window.WindLayer?.RAMP;
+    if (!R || $("wb-wbar").childElementCount) return;
+    $("wb-wbar").innerHTML = R.map(([, c]) => `<i style="background:${c}"></i>`).join("");
+    $("wb-wticks").innerHTML = R.slice(0, -1).map(([top], k) => `<span style="left:${((k + 1) / R.length) * 100}%">${top}</span>`).join("");
+  }
+
   async function showRdps() {
     const mode = $("wind").value, pOn = precipOn(), sOn = smokeOn();
     $("windbar").hidden = mode === "off" && !pOn && !sOn;
     $("wb-pk").hidden = !pOn;
+    $("wb-wk").hidden = mode !== "arrows";
+    if (mode === "arrows") drawWindKey();
     if (pOn) (snowMode() ? drawSnowKey : drawPrecipKey)();
     if (mode === "off" && !pOn) { wind?.setMode("off"); if (pOverlay) drawPrecip(null); }
     if (mode === "off" && !pOn && !sOn) { stopPlay(); showSmoke(); return; }

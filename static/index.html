@@ -33,6 +33,8 @@
       <button type="button" class="x" id="wb-close" aria-label="Turn wind, precipitation and smoke off" title="Turn wind, precipitation and smoke off">×</button>
     </div>
     <input type="range" id="wb-hour" min="0" max="0" value="0" aria-label="Forecast hour">
+    <div id="wb-wk" hidden title="Wind speed at 10 m (km/h), arrows point the way the wind blows">
+      <div class="wkbar" id="wb-wbar"></div><span class="wkunit">km/h</span><div class="wkticks" id="wb-wticks"></div></div>
     <div id="wb-pk" hidden title="Precipitation in the hour ending at the time shown, by type; each segment runs 0.1 → 10 mm/h">
       <canvas id="wb-pkey" width="300" height="9"></canvas><div id="wb-pticks"></div></div>
     <div id="wb-sk" hidden></div>

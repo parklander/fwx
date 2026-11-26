@@ -20,6 +20,15 @@
     [35, "rgba(15,22,35,0.75)", 1.35], [55, "rgba(10,15,25,0.9)", 1.6], [Infinity, "rgba(150,20,30,1)", 1.9],
   ];
 
+  // Arrow colour by speed, km/h (5 km/h bands, like the classic WRF/RDPS wind charts): [upper edge, colour].
+  // Exposed as WindLayer.RAMP so the page can draw the matching key.
+  const RAMP = [
+    [5, "#2bc6ee"], [10, "#1e8cf0"], [15, "#2436d8"], [20, "#a4ea3a"], [25, "#1fc21f"], [30, "#3a9a3a"],
+    [35, "#f2ee00"], [40, "#f5c400"], [45, "#f59800"], [50, "#f02a1a"], [55, "#cc0000"], [60, "#960000"],
+    [65, "#c45cf2"], [70, "#a800ee"], [80, "#6e1fa8"], [Infinity, "#111111"],
+  ];
+  const rampColour = (s) => RAMP.find(([top]) => s < top)[1];
+
   window.WindLayer = function (map, canvas, meta, opts = {}) {
     let light = !!opts.light, BUCKETS = light ? LIGHT_BG : DARK_BG;
     const halo = () => (light ? "rgba(255,255,255,.75)" : "rgba(10,12,16,.55)");
@@ -136,9 +145,10 @@
           const a = ((d + 180) * Math.PI) / 180, len = 7 + Math.min(s, 80) * 0.22;
           const dx = Math.sin(a) * len, dy = -Math.cos(a) * len;
           const x0 = x - dx / 2, y0 = y - dy / 2, x1 = x + dx / 2, y1 = y + dy / 2;
-          ctx.strokeStyle = halo(); ctx.lineWidth = 3.2;
+          // coloured by speed, on a thin halo so every colour reads on imagery and on a light basemap
+          ctx.strokeStyle = light ? "rgba(255,255,255,.8)" : "rgba(0,0,0,.55)"; ctx.lineWidth = 3.4;
           arrow(ctx, x0, y0, x1, y1, a);
-          ctx.strokeStyle = ink(s); ctx.lineWidth = 1.4;
+          ctx.strokeStyle = rampColour(s); ctx.lineWidth = s >= 45 ? 2 : 1.6;
           arrow(ctx, x0, y0, x1, y1, a);
         }
       }
@@ -187,4 +197,5 @@
       redraw,
     };
   };
+  window.WindLayer.RAMP = RAMP;
 })();

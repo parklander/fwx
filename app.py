@@ -23,6 +23,7 @@ import cwfis
 import fires
 import goes
 import smoke
+import status as base_status
 import snowdepth
 import push
 import report_pdf
@@ -188,6 +189,24 @@ def _area_panel(area):
 @app.get("/api/area/{aoi}")
 async def area_panel(aoi: str):
     return await run_in_threadpool(_area_panel, find_area(aoi))
+
+
+# ---- beta interface: base status (one statement, the items behind it, a 48 h timeline) ---------------------
+
+def _status(area):
+    panel = _area_panel(area)
+    cur = wx_alerts.for_area(area["id"])
+    alerts_area = _with_acks([cur])[0] if cur else None
+    try:
+        near = fire_data.near(area, 24)
+    except Exception:
+        near = None
+    return base_status.build(area, panel, alerts_area, near, (eer_plume, bluesky))
+
+
+@app.get("/api/status/{aoi}")
+async def area_status(aoi: str):
+    return await run_in_threadpool(_status, find_area(aoi))
 
 
 # ---- RDPS frames for the map overlays: 10 m wind, precipitation rate and type ------------------------------
@@ -415,6 +434,16 @@ def index():
 
 
 _RANGE = _versioned_index("range.html")
+
+
+_BETA = _versioned_index("beta.html")
+
+
+@app.get("/beta")
+@app.get("/beta/")
+def beta_page():
+    """Test interface, message first (see the interface review). Served at fwx-beta.rtams.ca too."""
+    return Response(_BETA, media_type="text/html", headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/range")

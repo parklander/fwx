@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FWX beta · Base status</title>
+<link rel="icon" href="/static/icon-192.png">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="/static/beta.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><b>FWX</b> <span class="tag">beta</span></div>
+  <select id="base" aria-label="Base"></select>
+  <span id="updated" class="updated"></span>
+  <nav class="links">
+    <a id="lnk-map" href="https://fwx.rtams.ca/">Full map</a>
+    <a id="lnk-burn" href="https://fwx.rtams.ca/">Burn windows</a>
+    <a id="lnk-pdf" href="#" target="_blank" rel="noopener">Forecast PDF</a>
+    <a id="lnk-panel" href="https://fwx.rtams.ca/range">Alert panel</a>
+  </nav>
+</header>
+
+<main>
+  <section id="status" class="status lvl-x" aria-live="polite">
+    <div class="st-main">
+      <div class="st-word" id="st-word">Loading…</div>
+      <div class="st-head" id="st-head"></div>
+    </div>
+    <div class="st-next" id="st-next"></div>
+    <div class="st-draft">Draft status rules, for testing with range control and the fire hall. Advisory only.</div>
+  </section>
+
+  <div class="grid">
+    <section class="card tlcard">
+      <h2>Next 48 hours <span class="muted" id="tl-tz"></span></h2>
+      <div class="tlwrap"><div id="timeline" class="timeline"></div></div>
+      <div id="readout" class="readout">Select an hour for its values.</div>
+      <p class="note">Fire danger by hour is an approximate class from the hourly FWI that FWX calculates from the forecast; the
+        status uses the official CWFIS daily class. Wind colours match the map's arrows. Smoke is the higher of the ECCC plume
+        model and BlueSky at the base, µg/m³.</p>
+    </section>
+
+    <aside class="side">
+      <section class="card">
+        <h2>Needs attention</h2>
+        <ul id="attention" class="attention"></ul>
+      </section>
+      <section class="card mapcard">
+        <h2>The area <span class="muted">hotspots last 24 h</span></h2>
+        <div id="map"></div>
+      </section>
+    </aside>
+  </div>
+</main>
+
+<footer class="foot">Sources: CWFIS (NRCan) daily fire danger · ECCC alerts and GEM forecast via Open-Meteo · FWX-calculated hourly FWI ·
+  NASA FIRMS hotspots · CWFIS reported fires · ECCC EER smoke plume model and BlueSky Canada. Test interface; the main site is
+  <a href="https://fwx.rtams.ca/">fwx.rtams.ca</a>.</footer>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="/static/beta.js"></script>
+</body>
+</html>

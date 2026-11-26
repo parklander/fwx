@@ -17,6 +17,8 @@
     [65, "#c45cf2"], [70, "#a800ee"], [80, "#6e1fa8"], [Infinity, "#111111"]];
   const windCol = (s) => RAMP.find(([t]) => s < t)[1];
   // the EER plume levels, µg/m³
+  // crossover tiers, as on the old crossover charts: 1 crossover, 2 30/30, 3 30/30/30
+  const XO = { 1: ["#fff3a8", "Crossover"], 2: ["#ffcf8a", "30/30"], 3: ["#f4a3a3", "30/30/30"] };
   const SMOKE = [[5, null], [10, "#cfe0ee"], [25, "#a9c9e2"], [35, "#d2c38a"], [50, "#d9a54a"], [75, "#d9822f"],
     [100, "#d0582a"], [200, "#b52d2a"], [Infinity, "#5e1550"]];
   const smokeCol = (v) => (v == null ? null : SMOKE.find(([t]) => v < t)[1]);
@@ -148,6 +150,10 @@
       const v = T.rh[i];
       return cell(i, v == null ? "" : Math.round(v), v != null && v <= S.rules.rh_low ? "rhlow" : "");
     });
+    if (T.xover) html += row("Crossover", "RH&lt;T · 30/30 · 30/30/30", (i) => {
+      const x = T.xover[i];
+      return cell(i, x >= 2 ? (x === 3 ? "30³" : "30²") : "", x ? "xo" : "", x ? `background:${XO[x][0]}` : "");
+    });
     html += row("Wind", "km/h", (i) => {
       const s = T.ws[i], d = T.wd[i];
       return cell(i, s == null ? "" : `<span><span class="arr" style="color:${windCol(s)};transform:rotate(${(d || 0) + 180}deg)">↑</span><br>${Math.round(s)}</span>`);
@@ -191,6 +197,7 @@
     parts.push(T.precip[i] ? `precip ${T.precip[i]} mm` : "no precip");
     if (T.smoke[i] != null) parts.push(`smoke ${Math.round(T.smoke[i])} µg/m³`);
     if (T.shifts.includes(i)) parts.push("<b>wind shift</b>");
+    if (T.xover?.[i]) parts.push(`<b>${XO[T.xover[i]][1]}</b>`);
     $("readout").innerHTML = parts.join(" · ");
   }
 

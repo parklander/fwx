@@ -75,3 +75,4 @@ main { max-width: 1400px; margin: 0 auto; padding: 16px 18px; }
   .links { margin-left: 0; }
   #map { height: 240px; }
 }
+.timeline .xo { font-size: 10px; font-weight: 800; color: #5a3a00; }

@@ -23,6 +23,9 @@ RULES = {
     "shift_window": 3,
     "shift_min_ws": 15,          # ...with at least this much wind, km/h
     "rh_low": 25,                # %, with danger Moderate or above
+    # extreme-condition hours: 1 crossover (RH % at or below temperature °C), 2 "30/30" (temp >= 30 °C and
+    # RH <= 30 %), 3 "30/30/30" (30/30 plus sustained wind >= 30 km/h)
+    "x_temp": 30, "x_rh": 30, "x_wind": 30,
     "hotspot_recent_h": 6,       # a hotspot inside the area this recent counts
 }
 # FWI -> approximate class; kept for reference only. The timeline uses the CWFIS daily class.
@@ -33,6 +36,18 @@ def _dclass(fwi):
     if fwi is None:
         return None
     return next(lab for top, lab in FWI_BANDS if fwi < top)
+
+
+def _xover(t, rh, ws, R=RULES):
+    """0 none, 1 crossover, 2 30/30, 3 30/30/30 for one hour."""
+    if t is None or rh is None:
+        return 0
+    if t >= R["x_temp"] and rh <= R["x_rh"]:
+        return 3 if (ws or 0) >= R["x_wind"] else 2
+    return 1 if rh <= t else 0
+
+
+X_NAMES = {1: "Crossover", 2: "30/30", 3: "30/30/30"}
 
 
 def _rank(label):
@@ -126,6 +141,23 @@ def build(area, panel, alerts_area, fires_near, smoke_sources, now=None):
             if get("rh", ri) is not None and get("rh", ri) <= R["rh_low"]:
                 add(1, "rh", f"Humidity down to {get('rh', ri):.0f}%", "Forecast, next 24 h", at=t_utc[ri])
 
+        # crossover / 30/30 / 30/30/30: one item per tier for its first run of hours in the next 24 h
+        xo = {i: _xover(get("temp", i), get("rh", i), get("ws", i)) for i in idx}
+        for tier in (3, 2, 1):
+            run = [i for i in ahead if xo[i] >= tier]
+            if not run:
+                continue
+            a = b = run[0]
+            while b + 1 in xo and xo[b + 1] >= tier:
+                b += 1
+            pk = max(range(a, b + 1), key=lambda i: (get("temp", i) or 0) - (get("rh", i) or 0))
+            span = f"{(t_utc[b] - t_utc[a]).total_seconds() / 3600 + 1:.0f} h"
+            detail = (f"{span}, worst {get('temp', pk):.0f} °C / RH {get('rh', pk):.0f}%"
+                      + (f" / wind {get('ws', pk):.0f} km/h" if tier == 3 else ""))
+            add(2 if tier == 3 else 1, "xover", X_NAMES[tier] + (" (RH below temperature)" if tier == 1 else ""),
+                detail, at=t_utc[a], until=t_utc[b] + timedelta(hours=1))
+            break  # only the highest tier reached; the timeline row shows the rest
+
         # smoke, hourly: the highest of the sources at each timeline hour
         smoke_by_hour = {}
         for src in smoke_sources:
@@ -148,6 +180,7 @@ def build(area, panel, alerts_area, fires_near, smoke_sources, now=None):
             "danger": [day_class.get(h["time"][i][:10]) for i in idx],
             "smoke": [smoke_by_hour.get(t_utc[i].strftime("%Y-%m-%dT%H")) for i in idx],
             "shifts": [idx.index(i) for i in shifts if i in idx],
+            "xover": [xo[i] for i in idx],
         }
 
     # ---- fires ----------------------------------------------------------------------------------------

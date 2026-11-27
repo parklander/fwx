@@ -44,7 +44,15 @@ WS = ("avg_wnd_spd_10m_pst10mts", "avg_wnd_spd_10m_pst2mts", "avg_wnd_spd_10m_ps
 WD = ("avg_wnd_dir_10m_pst10mts", "avg_wnd_dir_10m_pst2mts", "avg_wnd_dir_10m_pst1mt", "wnd_dir_10m_pst10mts_max_spd")
 GUST = ("max_wnd_gst_spd_10m_pst10mts", "max_wnd_spd_10m_pst10mts", "max_wnd_spd_10m_pst1hr")
 FIELDS = ["stn_nam-value", "msc_id-value", "date_tm-value", "data_pvdr-value", "air_temp", "rel_hum",
-          "pcpn_amt_pst1hr", *WS, *WD, *GUST]
+          "pcpn_amt_pst1hr", "snw_dpth", *WS, *WD, *GUST]
+
+
+def _snow(v):
+    """Snow depth in cm from a SWOB sonic sensor; readings just below zero are noise over bare ground."""
+    v = _num(v)
+    if v is None or v < -3 or v > 1000:
+        return None
+    return max(0.0, round(v, 1))
 
 _session = requests.Session()
 _session.headers["User-Agent"] = "FWX fire weather (fwx.rtams.ca)"
@@ -102,7 +110,7 @@ def eccc_fetch(minutes=ECCC_WINDOW_MIN):
                 "owner": p.get("data_pvdr-value") or "MSC", "lat": round(c[1], 4), "lon": round(c[0], 4),
                 "t": t.replace(".000Z", "Z"), "temp": _r(_num(p.get("air_temp"))), "rh": _r(_num(p.get("rel_hum")), 0),
                 "ws": _r(_first(p, WS)), "wd": _r(_first(p, WD), 0), "gust": _r(_first(p, GUST)),
-                "rain1h": _r(_num(p.get("pcpn_amt_pst1hr"))),
+                "rain1h": _r(_num(p.get("pcpn_amt_pst1hr"))), "snow": _snow(p.get("snw_dpth")),
             }
         offset += len(feats)
         matched = j.get("numberMatched")
@@ -242,6 +250,11 @@ class Obs:
             return []
         with self.lock:
             return list(self.mb_hist.get(sid[3:], []))
+
+    def snow_near(self, lat, lon, km=60, max_age_min=180):
+        """Stations within km that measure snow depth, closest first: [{name, km, snow, t}]."""
+        return [{"name": x["name"], "km": x["km"], "snow": x["snow"], "t": x["t"]}
+                for x in self.near(lat, lon, km=km, n=50, max_age_min=max_age_min) if x.get("snow") is not None][:8]
 
     def near(self, lat, lon, km=60, n=4, max_age_min=STALE_MIN):
         """Nearest stations with a recent reading, closest first, each with its distance and bearing from the point."""

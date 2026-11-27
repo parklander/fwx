@@ -134,11 +134,31 @@
   $("u-go").onclick = () => loadUsage().catch((e) => alert(e.message));
   $("days").onchange = $("u-go").onclick;
 
+  // ---- weekly report ------------------------------------------------------------------------------------
+  async function loadReportMeta() {
+    const j = await api("/api/admin/report");
+    const l = j.last || {};
+    $("r-last").textContent = (j.repo ? `to ${j.repo}` : "FW_REPORT_REPO not set: saved on the server only")
+      + (l.day ? ` · last sent ${l.day}: ${l.status}` : " · none sent yet");
+    return j;
+  }
+  $("r-show").onclick = async () => {
+    const pre = $("r-text");
+    if (!pre.hidden) { pre.hidden = true; return; }
+    try { pre.textContent = (await loadReportMeta()).text; pre.hidden = false; } catch (e) { alert(e.message); }
+  };
+  $("r-pub").onclick = async () => {
+    $("r-pub").disabled = true;
+    try { const j = await api("/api/admin/report/publish", {}); alert(j.status); loadReportMeta(); } catch (e) { alert(e.message); }
+    finally { $("r-pub").disabled = false; }
+  };
+
   async function start() {
     if (!token) return lock();
     try {
       await loadHealth();
-      $("locked").hidden = true; $("health-s").hidden = $("usage-s").hidden = false;
+      $("locked").hidden = true; $("health-s").hidden = $("usage-s").hidden = $("report-s").hidden = false;
+      loadReportMeta().catch(() => {});
       await loadUsage();
     } catch (e) {
       if (e.message === "locked") lock(); else alert(e.message);

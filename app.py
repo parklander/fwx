@@ -32,6 +32,7 @@ import report_pdf
 import rdps
 import wxpoint
 import obs as obs_mod
+import report as report_mod
 import health as health_mod
 import usage as usage_mod
 
@@ -46,6 +47,9 @@ def today():
     return datetime.now(TZ).date()
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-7s %(name)s: %(message)s")
+snowdepth.HISTORY_FILE = DATA / "snow_history.json"  # a daily sample of snow cover per area
+log_tally = report_mod.LogTally()  # warnings and errors, counted for the weekly report
+logging.getLogger().addHandler(log_tally)
 log = logging.getLogger("app")
 pusher = push.Push(DATA)
 wx_alerts = alerts.Alerts(AOI_FILE, DATA / "alerts_state.json", on_new=pusher.notify_alert)
@@ -118,6 +122,8 @@ async def lifespan(app):
         health.add("BlueSky smoke", health_mod.smoke_check(bluesky, seasonal=True))
     if os.environ.get("FW_OBS", "1") != "0":
         threading.Thread(target=obs_data.loop, args=(_stop,), name="obs", daemon=True).start()
+    if os.environ.get("FW_REPORT", "1") != "0":
+        threading.Thread(target=weekly.loop, args=(_stop,), name="report", daemon=True).start()
     if os.environ.get("FW_HEALTH", "1") != "0":
         threading.Thread(target=health.loop, args=(_stop,), name="health", daemon=True).start()
     yield
@@ -238,7 +244,7 @@ async def area_panel(aoi: str):
 
 # ---- beta interface: base status (one statement, the items behind it, a 48 h timeline) ---------------------
 
-def _status(area):
+def _status(area, force_season=None):
     panel = _area_panel(area)
     cur = wx_alerts.for_area(area["id"])
     alerts_area = _with_acks([cur])[0] if cur else None
@@ -246,12 +252,33 @@ def _status(area):
         near = fire_data.near(area, 24)
     except Exception:
         near = None
-    return base_status.build(area, panel, alerts_area, near, (eer_plume, bluesky))
+    snow = _area_snow(area)
+    return base_status.build(area, panel, alerts_area, near, (eer_plume, bluesky), snow=snow, force_season=force_season)
+
+
+def _area_snow(area):
+    b = area.get("bbox")
+    lat, lon = ((b[1] + b[3]) / 2, (b[0] + b[2]) / 2) if b else (area["lat"], area["lon"])
+    try:
+        return snowdepth.area_snow(area, obs_data.snow_near(lat, lon))
+    except Exception as e:
+        log.warning("snow cover for %s: %s", area["id"], e)
+        return None
+
+
+@app.get("/api/snow/area/{aoi}")
+def snow_area(aoi: str):
+    """Snow on the ground inside an area: CaLDAS, HRDPS and station snow depth, and the best estimate."""
+    out = _area_snow(find_area(aoi))
+    if out is None:
+        raise HTTPException(502, "Neither CaLDAS nor HRDPS is answering")
+    return out
 
 
 @app.get("/api/status/{aoi}")
-async def area_status(aoi: str):
-    return await run_in_threadpool(_status, find_area(aoi))
+async def area_status(aoi: str, season: str | None = Query(None, pattern="^(winter|patchy|grass|growing)$")):
+    """season= previews that seasonal mode (sample season text; the rest of the status is live)."""
+    return await run_in_threadpool(_status, find_area(aoi), season)
 
 
 # ---- RDPS frames for the map overlays: 10 m wind, precipitation rate and type ------------------------------
@@ -534,6 +561,24 @@ async def admin_push_test(x_admin_token: str = Header("")):
     _admin(x_admin_token)
     n = await run_in_threadpool(pusher.notify_admin, "FWX admin test", "Health notices will arrive like this.")
     return {"sent": n}
+
+
+weekly = report_mod.Weekly(DATA, TZ, lambda: report_mod.build(usage_log, health.events(), log_tally, load_areas()[1]))
+
+
+@app.get("/api/admin/report")
+async def admin_report(x_admin_token: str = Header("")):
+    """This week's report as it stands now (not published), and when the last one was sent."""
+    _admin(x_admin_token)
+    text = await run_in_threadpool(lambda: report_mod.build(usage_log, health.events(), log_tally, load_areas()[1]))
+    return {"text": text, "last": weekly.last(), "repo": os.environ.get("FW_REPORT_REPO") or None}
+
+
+@app.post("/api/admin/report/publish")
+async def admin_report_publish(x_admin_token: str = Header("")):
+    _admin(x_admin_token)
+    day, _, status = await run_in_threadpool(weekly.make)
+    return {"day": day, "status": status}
 
 
 @app.get("/admin")

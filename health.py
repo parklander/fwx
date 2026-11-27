@@ -28,6 +28,7 @@ def _age_h(iso):
 class Health:
     def __init__(self, data_dir, notify):
         self.file = Path(data_dir) / "health_state.json"
+        self.events_file = Path(data_dir) / "health_events.jsonl"  # every problem and recovery, for the weekly report
         self.notify = notify  # notify(title, body)
         self.checks = {}      # name -> fn() -> (ok, message)
         self.lock = threading.Lock()
@@ -52,6 +53,7 @@ class Health:
                 if ok:
                     if s["alerted"]:
                         out.append((f"FWX recovered: {name}", msg or "Working again."))
+                        self._event(now, "recovered", name, f"back after a failure since {s['since']}")
                     if not s["ok"]:
                         s["since"] = now
                     s.update(ok=True, msg=msg, fails=0, alerted=False)
@@ -62,6 +64,7 @@ class Health:
                     if s["fails"] >= FAILS_TO_ALERT and not s["alerted"]:
                         s["alerted"] = True
                         out.append((f"FWX problem: {name}", msg))
+                        self._event(s["since"], "problem", name, msg)
                 s["checked"] = now
         with self.lock:
             try:
@@ -74,6 +77,19 @@ class Health:
                 self.notify(title, body)
             except Exception:
                 log.exception("admin push failed")
+
+    def _event(self, t, kind, name, msg):
+        try:
+            with self.events_file.open("a", encoding="utf-8") as f:
+                f.write(json.dumps({"t": t, "kind": kind, "name": name, "msg": msg[:300]}) + "\n")
+        except OSError:
+            pass
+
+    def events(self):
+        try:
+            return [json.loads(x) for x in self.events_file.read_text(encoding="utf-8").splitlines()[-500:] if x.strip()]
+        except (OSError, ValueError):
+            return []
 
     def report(self):
         with self.lock:

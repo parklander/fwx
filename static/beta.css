@@ -76,3 +76,9 @@ main { max-width: 1400px; margin: 0 auto; padding: 16px 18px; }
   #map { height: 240px; }
 }
 .timeline .xo { font-size: 10px; font-weight: 800; color: #5a3a00; }
+.st-season { grid-column: 1 / -1; font-size: 14px; color: var(--ink2); margin-top: 6px; padding-top: 8px; border-top: 1px solid rgba(0,0,0,.08); }
+.st-season .chip { display: inline-block; font-weight: 700; font-size: 13px; padding: 1px 9px; border-radius: 10px; margin-right: 6px; color: #fff; background: #6b7780; }
+.st-season.s-winter .chip { background: #2f6fd6; } .st-season.s-patchy .chip { background: #7a8fa6; }
+.st-season.s-grass .chip { background: #c76a00; } .st-season.s-growing .chip { background: #3c9a3f; }
+.st-season .sn { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.st-season .pv { color: #b3261e; font-size: 12px; }

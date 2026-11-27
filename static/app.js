@@ -201,7 +201,7 @@
   // Snow depth from ECCC GeoMet: the CaLDAS analysis of snow on the ground, and the HRDPS forecast (see snowdepth.py)
   const SNOWL = {
     snow_caldas: { key: "caldas", title: "Snow on ground (CaLDAS analysis)",
-      desc: "Estimated snow on the ground from ECCC's CaLDAS land-surface analysis (2.5 km, every 3 h). No colour means no snow." },
+      desc: "Estimated snow on the ground from ECCC's CaLDAS land-surface analysis (2.5 km, every 3 h). No colour means no snow. It can lag melt by days: check it against the HRDPS forecast and station snow depths." },
     snow_hrdps: { key: "hrdps", title: "Snow depth forecast (HRDPS)",
       desc: "Forecast snow depth from ECCC's HRDPS (2.5 km, hourly, about 2 days ahead), starting from the CaLDAS analysis and adding new snowfall and melt. No colour means no snow." },
   };
@@ -1022,7 +1022,7 @@
       <table><tr><td>Temperature</td><td><b>${obsVal(s.temp, " °C", 1)}</b></td></tr>
       <tr><td>Humidity</td><td><b>${obsVal(s.rh, "%")}</b></td></tr>
       <tr><td>Wind</td><td><b>${s.wd != null ? OBS_COMPASS[Math.round(s.wd / 22.5) % 16] + " " : ""}${obsVal(s.ws, " km/h")}</b>${s.gust != null ? `, gusts ${obsVal(s.gust)}` : ""}</td></tr>
-      <tr><td>Rain, last hour</td><td>${obsVal(s.rain1h, " mm", 1)}</td></tr></table>
+      <tr><td>Rain, last hour</td><td>${obsVal(s.rain1h, " mm", 1)}</td></tr>${s.snow != null ? `<tr><td>Snow depth</td><td>${obsVal(s.snow, " cm")}</td></tr>` : ""}</table>
       <div class="sub" id="obs-hist-${escF(s.id.replace(/\W/g, "_"))}">${s.src === "MB" ? "Loading the last 24 h…" : ""}</div></div>`;
   }
   async function obsHistory(s) {

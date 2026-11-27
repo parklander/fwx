@@ -85,7 +85,8 @@
     $("lnk-pdf").href = `${MAIN}/api/forecast.pdf?aoi=${q}`;
     $("lnk-panel").href = `${MAIN}/range?aoi=${q}`;
     try {
-      const r = await fetch(`/api/status/${q}`, { cache: "no-store" });
+      const pv = new URLSearchParams(location.search).get("season");
+      const r = await fetch(`/api/status/${q}${pv ? `?season=${encodeURIComponent(pv)}` : ""}`, { cache: "no-store" });
       if (!r.ok) throw new Error(r.status);
       S = await r.json();
     } catch (_) {
@@ -101,6 +102,20 @@
     $("st-word").textContent = S.label;
     $("st-head").textContent = S.headline;
     $("st-next").innerHTML = S.next ? `Next: <b>${esc(S.next.title)}</b>${esc(when(S.next.at))}` : "";
+    const se = S.season;
+    if (se) {
+      const sn = se.snow;
+      const NAME = { hrdps: "HRDPS", caldas: "CaLDAS" };
+      const src = (k) => { const x = sn.sources?.[k]; return x ? `${NAME[k]} ${x.mean_cm} cm, ${x.covered_pct}% covered${k === sn.source ? " (used)" : ""}` : `${NAME[k]} unavailable`; };
+      const snowLine = !sn ? "Snow cover unavailable right now"
+        : `Snow: ${src(sn.source)} · ${src(sn.source === "hrdps" ? "caldas" : "hrdps")}`
+          + (sn.stations?.length ? ` · measured at ${sn.stations.slice(0, 3).map((x) => `${esc(x.name)} ${x.snow} cm`).join(", ")}` : "")
+          + (sn.disagree ? ` · <b>the models disagree</b>; using the one ${esc(sn.basis.replace(/^closest/, "closer"))}` : "")
+          + (sn.trend_cm_3d != null ? ` · ${sn.trend_cm_3d > 0 ? "+" : ""}${sn.trend_cm_3d} cm in 3 days` : "");
+      $("st-season").className = `st-season s-${se.mode}`;
+      $("st-season").innerHTML = `<span class="chip">${esc(se.icon)} ${esc(se.label)}</span> ${esc(se.text)}`
+        + (se.preview ? ` <b class="pv">Preview of this mode; the rest of the page is live.</b>` : `<div class="sn">${snowLine}</div>`);
+    }
     const gaps = Object.entries(S.sources_ok || {}).filter(([, ok]) => !ok).map(([k]) => k.toUpperCase());
     $("updated").textContent = `Updated ${S.fetched ? hm(S.fetched) : ""}` + (gaps.length ? ` · missing: ${gaps.join(", ")}` : "");
     document.title = `${S.label} · ${S.area.name} · FWX beta`;

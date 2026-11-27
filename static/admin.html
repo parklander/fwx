@@ -59,6 +59,14 @@
       <button id="p-rm">Remove this device</button><span id="msg"></span></div>
   </section>
 
+  <section id="report-s" hidden>
+    <h2>Weekly report <small id="r-last"></small>
+      <button id="r-show">Preview this week</button><button id="r-pub">Send now</button></h2>
+    <p class="muted">Written every Saturday at 6 am and saved to a private GitHub repo for the Saturday review.
+      Counts only, no IP addresses; feedback is quoted as sent.</p>
+    <pre id="r-text" hidden style="white-space:pre-wrap;font:12px/1.45 ui-monospace,Consolas,monospace;background:#f6f7f8;padding:10px;border-radius:6px;max-height:520px;overflow:auto"></pre>
+  </section>
+
   <section id="usage-s" hidden>
     <h2>Usage
       <select id="days"><option value="7">7 days</option><option value="14" selected>14 days</option><option value="30">30 days</option><option value="90">90 days</option></select>

@@ -46,17 +46,29 @@
     osm: { label: "OpenStreetMap", dark: false, make: () => [
       L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 18, attribution: "© OpenStreetMap contributors" }),
     ] },
+    // the latest GOES natural colour image over the dark basemap (which shows at night and outside the image)
+    goes: { label: "Satellite, latest (GOES)", dark: true, sat: true, make: () => [
+      esri("Canvas/World_Dark_Gray_Base", { maxNativeZoom: 16, maxZoom: 18,
+        attribution: `Esri, HERE, Garmin, © OpenStreetMap contributors, and the GIS user community · ${ESRI_TERMS}` }),
+      esri("Canvas/World_Dark_Gray_Reference", { maxNativeZoom: 16, maxZoom: 18, pane: "labels" }),
+    ] },
   };
+  // older settings had the satellite image and the snow layers in the fire weather list
+  const legacyLayer = prefs.layer;
+  if (legacyLayer === "sat_natural") prefs.basemap = "goes";
+  if (legacyLayer === "snow_caldas" || legacyLayer === "snow_hrdps") prefs.precip = legacyLayer === "snow_caldas" ? "caldas" : "hrdps";
   $("basemap").innerHTML = Object.entries(BASEMAPS).map(([k, b]) => `<option value="${k}">${b.label}</option>`).join("");
   $("basemap").value = BASEMAPS[prefs.basemap] ? prefs.basemap : "dark";
-  let baseLayers = [];
+  let baseLayers = [], satBaseHook = null;  // satBaseHook: shows or drops the GOES image, once that code has run
   const darkBase = () => BASEMAPS[$("basemap").value].dark;
+  const goesBase = () => !!BASEMAPS[$("basemap").value].sat;
   function setBasemap() {
     baseLayers.forEach((l) => map.removeLayer(l));
     baseLayers = BASEMAPS[$("basemap").value].make();
     baseLayers.forEach((l) => l.addTo(map));
     map.setMaxZoom(baseLayers[0].options.maxZoom);
     document.body.classList.toggle("dark-base", darkBase());
+    satBaseHook?.();
   }
   setBasemap();
 
@@ -183,10 +195,9 @@
   // GOES satellite imagery (ECCC GeoMet WMS): the latest image, 1 km, every 10 min
   const SAT = {
     sat_natural: { key: "natural", title: "Natural colour",
-      desc: "Daytime colour image: land green-brown, water clouds white, ice clouds and snow cyan, smoke a grey-tan haze. Blank at night." },
+      desc: "Daytime colour image: land green-brown, water clouds white, ice clouds and snow cyan, smoke a grey-tan haze. At night the dark basemap shows instead." },
   };
   const SAT_SPLIT_LON = -105;  // GOES-West west of here: it sees BC and Yukon at a far better angle
-  const isSat = (id) => id in SAT;
   // Snow depth from ECCC GeoMet: the CaLDAS analysis of snow on the ground, and the HRDPS forecast (see snowdepth.py)
   const SNOWL = {
     snow_caldas: { key: "caldas", title: "Snow on ground (CaLDAS analysis)",
@@ -194,13 +205,10 @@
     snow_hrdps: { key: "hrdps", title: "Snow depth forecast (HRDPS)",
       desc: "Forecast snow depth from ECCC's HRDPS (2.5 km, hourly, about 2 days ahead), starting from the CaLDAS analysis and adding new snowfall and melt. No colour means no snow." },
   };
-  const isSnowL = (id) => id in SNOWL;
   // "none": just the basemap, e.g. to read the wind and precipitation overlays on their own
-  $("layer").innerHTML = `<option value="none">None (basemap only)</option><optgroup label="CWFIS daily">${info.layers.map((l) => `<option value="${l.id}">${l.title}</option>`).join("")}</optgroup>`
-    + `<optgroup label="Satellite (GOES)">${Object.entries(SAT).map(([id, s]) => `<option value="${id}">${s.title}</option>`).join("")}</optgroup>`
-    + `<optgroup label="Snow (ECCC)">${Object.entries(SNOWL).map(([id, s]) => `<option value="${id}">${s.title}</option>`).join("")}</optgroup>`;
-  $("layer").value = layerById[prefs.layer] || isSat(prefs.layer) || isSnowL(prefs.layer) || prefs.layer === "none" ? prefs.layer
-    : info.layers.some((l) => l.id === "fwi") ? "fwi" : info.layers[0]?.id || "sat_natural";
+  $("layer").innerHTML = `<option value="none">None (basemap only)</option><optgroup label="CWFIS daily">${info.layers.map((l) => `<option value="${l.id}">${l.title}</option>`).join("")}</optgroup>`;
+  $("layer").value = layerById[prefs.layer] || prefs.layer === "none" ? prefs.layer
+    : info.layers.some((l) => l.id === "fwi") ? "fwi" : info.layers[0]?.id || "none";
 
   function setDateRange() {
     const l = layerById[$("layer").value];
@@ -211,43 +219,51 @@
     if ($("date").value < l.start) $("date").value = l.start;
   }
 
-  let wms = null, GOES = null;
+  let wms = null, satWms = null, snowWms = null, GOES = null;
+  const lgSync = () => { $("legend").hidden = $("lg-main").hidden && $("lg-snow").hidden; };
   async function loadGoes() {
     try { GOES = await (await fetch("/api/goes")).json(); } catch (_) { return; }
-    if (isSat($("layer").value)) showLayer();
+    showSatBase();
   }
   const satSide = () => (map.getCenter().lng < SAT_SPLIT_LON ? "West" : "East");
 
-  function showSat() {
-    const s = SAT[$("layer").value], t = GOES?.layers?.[`${satSide().toLowerCase()}:${s.key}`];
-    $("legend-img").hidden = true;
-    $("legend-title").textContent = `GOES-${satSide()} ${s.title.toLowerCase()}`;
-    if (!t) {
-      if (wms) { map.removeLayer(wms); wms = null; }
-      $("legend-date").textContent = GOES ? "Satellite images are unavailable right now." : "Loading…";
-      $("legend").hidden = false;
+  // the GOES basemap: the image sits on the dark basemap, under everything else; its time goes under the basemap picker
+  function showSatBase() {
+    const note = $("basenote");
+    if (!goesBase()) {
+      if (satWms) { map.removeLayer(satWms); satWms = null; }
+      note.hidden = true;
       return;
     }
-    if (!wms || wms.options.layers !== t.layer || wms._url !== GOES.wms) {
-      if (wms) map.removeLayer(wms);
-      wms = L.tileLayer.wms(GOES.wms, { layers: t.layer, format: "image/png", transparent: true, version: "1.3.0",
-        time: t.end, opacity: 1, attribution: `GOES-${satSide()} imagery: ECCC GeoMet` }).addTo(map);
-      wms.on("loading", () => status("Loading satellite image…"));
-      wms.on("load", () => status(""));
-    } else if (wms.wmsParams.time !== t.end) {
-      wms.setParams({ time: t.end });
+    const s = SAT.sat_natural, t = GOES?.layers?.[`${satSide().toLowerCase()}:${s.key}`];
+    note.hidden = false;
+    if (!t) {
+      if (satWms) { map.removeLayer(satWms); satWms = null; }
+      note.textContent = GOES ? "Satellite images are unavailable right now; showing the dark basemap." : "Loading the satellite image…";
+      return;
+    }
+    if (!satWms || satWms.options.layers !== t.layer || satWms._url !== GOES.wms) {
+      if (satWms) map.removeLayer(satWms);
+      satWms = L.tileLayer.wms(GOES.wms, { layers: t.layer, format: "image/png", transparent: true, version: "1.3.0",
+        time: t.end, opacity: 1, zIndex: 2, attribution: `GOES-${satSide()} imagery: ECCC GeoMet` }).addTo(map);
+      satWms.on("loading", () => status("Loading satellite image…"));
+      satWms.on("load", () => status(""));
+    } else if (satWms.wmsParams.time !== t.end) {
+      satWms.setParams({ time: t.end });
     }
     const when = new Date(t.end).toLocaleString("en-CA", { weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false, timeZoneName: "short" });
-    $("legend-date").innerHTML = `${s.desc}<br><b>Image ${when}</b> · latest, refreshed every 10 min`;
-    $("legend").hidden = false;
+    note.innerHTML = `<b>GOES-${satSide()} natural colour, ${when}</b> · refreshed every 10 min. ${s.desc}`;
   }
+  satBaseHook = showSatBase;
 
   // ---- snow depth layers ----
   let SNOW = null, barHour = () => null;  // barHour: the wind/precip hour bar's hour, once that code has run
   async function loadSnow() {
     try { SNOW = await (await fetch("/api/snow")).json(); } catch (_) { return; }
-    if (isSnowL($("layer").value)) showSnowL();
+    showSnowL();
   }
+  // the ECCC snow layers are picked under Forecast overlays → Precip / snow
+  const snowLId = () => ({ caldas: "snow_caldas", hrdps: "snow_hrdps" })[$("precip").value];
   const isoHour = (d) => `${d.toISOString().slice(0, 13)}:00:00Z`;
   const fmtT = (s) => new Date(s).toLocaleString("en-CA", { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false, timeZoneName: "short" });
   function snowLTime(key, L0) {  // -> [time, clamped]
@@ -259,54 +275,56 @@
     return [isoHour(new Date(t)), Math.abs(t - want.getTime()) >= 3600e3];
   }
   function showSnowL() {
-    const spec = SNOWL[$("layer").value], L0 = SNOW?.layers?.[spec.key];
-    $("legend-title").textContent = spec.title;
+    const id = snowLId();
+    if (!id) {
+      if (snowWms) { map.removeLayer(snowWms); snowWms = null; }
+      $("lg-snow").hidden = true; lgSync();
+      return;
+    }
+    const spec = SNOWL[id], L0 = SNOW?.layers?.[spec.key];
+    $("snow-title").textContent = spec.title;
+    $("lg-snow").hidden = false; lgSync();
     if (!L0) {
-      if (wms) { map.removeLayer(wms); wms = null; }
-      $("legend-img").hidden = true;
-      $("legend-date").textContent = SNOW ? "This ECCC layer is unavailable right now." : "Loading…";
-      $("legend").hidden = false;
+      if (snowWms) { map.removeLayer(snowWms); snowWms = null; }
+      $("snow-img").hidden = true;
+      $("snow-date").textContent = SNOW ? "This ECCC layer is unavailable right now." : "Loading…";
       return;
     }
     const [time, clamped] = snowLTime(spec.key, L0);
-    if (!wms || wms.options.layers !== L0.layer || wms._url !== SNOW.wms) {
-      if (wms) map.removeLayer(wms);
-      wms = L.tileLayer.wms(SNOW.wms, { layers: L0.layer, styles: L0.style, format: "image/png", transparent: true,
-        version: "1.3.0", time, opacity: 0.8, attribution: "Snow depth: Data Source: Environment and Climate Change Canada" }).addTo(map);
-      wms.on("loading", () => status("Loading snow depth…"));
-      wms.on("load", () => status(""));
-    } else if (wms.wmsParams.time !== time) {
-      wms.setParams({ time });
+    if (!snowWms || snowWms.options.layers !== L0.layer || snowWms._url !== SNOW.wms) {
+      if (snowWms) map.removeLayer(snowWms);
+      snowWms = L.tileLayer.wms(SNOW.wms, { layers: L0.layer, styles: L0.style, format: "image/png", transparent: true,
+        version: "1.3.0", time, opacity: 0.8, zIndex: 6, attribution: "Snow depth: Data Source: Environment and Climate Change Canada" }).addTo(map);
+      snowWms.on("loading", () => status("Loading snow depth…"));
+      snowWms.on("load", () => status(""));
+    } else if (snowWms.wmsParams.time !== time) {
+      snowWms.setParams({ time });
     }
-    $("legend-img").hidden = false;
-    $("legend-img").src = `${SNOW.wms}?service=WMS&version=1.3.0&request=GetLegendGraphic&sld_version=1.1.0&format=image/png&layer=${L0.layer}&STYLE=${L0.style}`;
+    $("snow-img").hidden = false;
+    $("snow-img").src = `${SNOW.wms}?service=WMS&version=1.3.0&request=GetLegendGraphic&sld_version=1.1.0&format=image/png&layer=${L0.layer}&STYLE=${L0.style}`;
     const run = L0.run ? `${L0.run.slice(11, 13)}Z ${L0.run.slice(8, 10)}/${L0.run.slice(5, 7)}` : "";
-    $("legend-date").innerHTML = `${spec.desc}<br><b>${spec.key === "caldas" ? "Analysis" : "Forecast for"} ${fmtT(time)}</b>`
+    $("snow-date").innerHTML = `${spec.desc}<br><b>${spec.key === "caldas" ? "Analysis" : "Forecast for"} ${fmtT(time)}</b>`
       + (spec.key === "hrdps" && run ? ` · run ${run}` : "")
       + (clamped ? `<br>The HRDPS forecast doesn't cover the hour on the bar; this is its nearest hour.` : "")
       + (L0.stale ? `<br><b>ECCC hasn't updated this layer since the ${run} run, so this may be out of date.</b>` : "");
-    $("legend").hidden = false;
   }
 
   function showLayer() {
-    const id = $("layer").value, sat = isSat(id), snowL = isSnowL(id);
-    $("date").disabled = sat || snowL;
-    $("date").title = sat ? "The satellite layer shows the latest image" : snowL ? "Snow depth shows the latest analysis or the forecast hour" : "";
-    wind?.setLight(!sat && !darkBase());  // white wind streaks over the satellite image and dark basemaps
+    const id = $("layer").value;
+    $("date").disabled = id === "none";
+    wind?.setLight(!darkBase());  // white wind streaks over the satellite image and dark basemaps
     if (id === "none") {
       if (wms) { map.removeLayer(wms); wms = null; }
-      $("legend").hidden = true;
+      $("lg-main").hidden = true; lgSync();
       status("");
-    } else if (sat) { showSat(); }
-    else if (snowL) { showSnowL(); }
-    else {
+    } else {
       const l = layerById[id];
       if (!l) return;
       setDateRange();
       const time = $("date").value;
       if (wms) map.removeLayer(wms);
       wms = L.tileLayer.wms(info.wms, {
-        layers: l.id, format: "image/png", transparent: true, version: "1.3.0", time, opacity: 0.7,
+        layers: l.id, format: "image/png", transparent: true, version: "1.3.0", time, opacity: 0.7, zIndex: 4,
         attribution: "NRCan CWFIS",
       }).addTo(map);
       wms.on("loading", () => status("Loading map…"));
@@ -315,13 +333,13 @@
       $("legend-title").textContent = l.title;
       $("legend-img").src = `${info.wms}?service=WMS&version=1.3.0&request=GetLegendGraphic&format=image/png&layer=${l.id}`;
       $("legend-date").textContent = `${time}${time >= today ? " (forecast)" : " (observed)"}`;
-      $("legend").hidden = false;
+      $("lg-main").hidden = false; lgSync();
     }
     areaLayer.eachLayer((g) => g.bringToFront());
     shapes[$("aoi").value]?.bringToFront();
   }
   // GOES-East/West swap as the map crosses SAT_SPLIT_LON; new images every 10 min
-  map.on("moveend", () => { if (isSat($("layer").value)) showSat(); });
+  map.on("moveend", () => { if (goesBase()) showSatBase(); });
   setInterval(loadGoes, 5 * 60e3);
   setInterval(loadSnow, 10 * 60e3);
 
@@ -506,7 +524,8 @@
   let WM = null, rdpsHours = [], rdpsFrames = new Map(), shown = {}, playing = null, metaTimer = null;
   const curHour = () => rdpsHours[+$("wb-hour").value];
   barHour = curHour;
-  const windOn = () => $("wind").value !== "off", precipOn = () => $("precip").value !== "off";
+  const windOn = () => $("wind").value !== "off", precipOn = () => ["on", "snow"].includes($("precip").value);
+  const snowFc = () => $("precip").value === "hrdps";  // the HRDPS snow depth forecast follows the hour bar
 
   // Precipitation rate (mm/h) coloured by type, as in the fire-modeling viewer: one intensity ramp per type,
   // transparent where dry. Index = type: 1 rain, 2 rain/snow mix, 3 freezing rain, 4 ice pellets, 5 snow.
@@ -647,7 +666,7 @@
     try { m = await (await fetch("/api/rdps")).json(); } catch (_) { return; }
     const keep = curHour()?.valid;
     WM = m;
-    if (!wind && m.width) { wind = WindLayer(map, $("wind-canvas"), m, { light: !isSat($("layer").value) && !darkBase() }); wind.setMode("off"); }
+    if (!wind && m.width) { wind = WindLayer(map, $("wind-canvas"), m, { light: !darkBase() }); wind.setMode("off"); }
     // hours from the current hour on (the run starts a little before now)
     const now = Date.now() - 3600e3;
     rdpsHours = (m.hours || []).map((h) => ({ ...h, t: new Date(h.valid.replace("Z", ":00Z")) })).filter((h) => h.t.getTime() >= now);
@@ -686,7 +705,7 @@
   }
 
   async function showRdps() {
-    const mode = $("wind").value, pOn = precipOn(), sOn = smokeOn();
+    const mode = $("wind").value, pOn = precipOn(), sOn = smokeOn() || snowFc();
     $("windbar").hidden = mode === "off" && !pOn && !sOn;
     $("wb-pk").hidden = !pOn;
     $("wb-wk").hidden = mode !== "arrows";
@@ -715,7 +734,7 @@
       updateReadout();
       const nxt = rdpsHours[+$("wb-hour").value + 1];
       if (nxt) (snow ? frame(run, "precip", nxt.fh) : framesFor(run, nxt)).catch(() => {});  // prefetch the next hour
-      if ($("layer").value === "snow_hrdps") showSnowL();
+      if (snowFc()) showSnowL();
     } catch (_) {
       $("wb-time").textContent = "Couldn't load this hour";
     }
@@ -769,7 +788,7 @@
   $("wb-prev").onclick = () => { TRK.act("timeline_step"); stopPlay(); step(-1); };
   $("wb-next").onclick = () => { TRK.act("timeline_step"); stopPlay(); step(1); };
   $("wb-hour").oninput = () => { TRK.act("timeline_scrub"); stopPlay(); showRdps(); };
-  $("wb-close").onclick = () => { $("wind").value = "off"; $("precip").value = "off"; $("smoke").value = "off"; save(); showRdps(); };
+  $("wb-close").onclick = () => { $("wind").value = "off"; $("precip").value = "off"; $("smoke").value = "off"; save(); showRdps(); showSnowL(); };
 
   // ---- smoke: ECCC FireWork (GeoMet WMS) and BlueSky Canada (hourly PNGs made from its netCDF; see smoke.py) ----
   // Both follow the hour bar; the hour nearest now when the bar has no RDPS hours yet.
@@ -1070,7 +1089,7 @@
   loadObs();
 
   $("wind").value = ["particles", "arrows"].includes(prefs.wind) ? prefs.wind : "off";
-  $("precip").value = ["on", "snow"].includes(prefs.precip) ? prefs.precip : "off";
+  $("precip").value = ["on", "snow", "caldas", "hrdps"].includes(prefs.precip) ? prefs.precip : "off";
   $("basemap").onchange = () => {
     setBasemap(); save();
     const id = $("aoi").value;
@@ -1078,10 +1097,10 @@
       if (x instanceof L.Rectangle) x.setStyle(styleFor(k === id));
       else x.setStyle({ ...dotStyle(), fillColor: darkBase() ? "#1d2329" : "#fff" });
     });
-    wind?.setLight(!isSat($("layer").value) && !darkBase());
+    wind?.setLight(!darkBase());
     if (phone.matches) closeSettings();
   };
-  $("wind").onchange = $("precip").onchange = () => { save(); showRdps(); if (phone.matches) closeSettings(); };
+  $("wind").onchange = $("precip").onchange = () => { save(); showRdps(); showSnowL(); if (phone.matches) closeSettings(); };
 
   // ---- ☰ Layers: the map layers panel. Wide screens: open by default and remembered; phones: closes after a pick ----
   const phone = window.matchMedia("(max-width: 700px)");

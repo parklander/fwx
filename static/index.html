@@ -69,11 +69,13 @@
       <label>Date <input type="date" id="date"></label>
     </section>
     <section>
-      <h3>Forecast overlays <span>RDPS, next 48 h</span></h3>
+      <h3>Forecast overlays <span>next 48 h</span></h3>
       <label title="RDPS 10 m wind for the next 48 hours">Wind <select id="wind">
         <option value="off">Off</option><option value="particles">Particles</option><option value="arrows">Arrows</option></select></label>
-      <label title="RDPS precipitation for the next 48 hours: hourly rate by type, or snow added up from now">Precip <select id="precip">
-        <option value="off">Off</option><option value="on">Rate by type</option><option value="snow">Snow from now</option></select></label>
+      <label title="RDPS precipitation for the next 48 hours (hourly rate by type, or new snow added up from now), or ECCC snow depth: on the ground now (CaLDAS) or forecast (HRDPS)">Precip / snow <select id="precip">
+        <option value="off">Off</option>
+        <optgroup label="Precipitation (RDPS)"><option value="on">Rate by type</option><option value="snow">New snow from now</option></optgroup>
+        <optgroup label="Snow depth (ECCC)"><option value="caldas">Snow on the ground now (CaLDAS)</option><option value="hrdps">Snow depth forecast (HRDPS)</option></optgroup></select></label>
     </section>
     <section>
       <h3>Observations <span>stations, now</span></h3>
@@ -97,6 +99,7 @@
     <section>
       <h3>Map</h3>
       <label>Basemap <select id="basemap"></select></label>
+      <div class="obskey" id="basenote" hidden></div>
     </section>
     <section>
       <h3>Alerts</h3>
@@ -110,9 +113,12 @@
   <aside id="alerts" class="panel" hidden></aside>
   <aside id="notify" class="panel" hidden></aside>
   <aside id="legend" hidden title="Tap to show or hide the legend">
-    <b id="legend-title"></b>
-    <img id="legend-img" alt="Legend">
-    <div class="sub" id="legend-date"></div>
+    <div id="lg-main" hidden><b id="legend-title"></b>
+      <img id="legend-img" alt="Legend">
+      <div class="sub" id="legend-date"></div></div>
+    <div id="lg-snow" hidden><b id="snow-title"></b>
+      <img id="snow-img" alt="Snow depth legend">
+      <div class="sub" id="snow-date"></div></div>
   </aside>
 </main>
 <footer>Daily grids from the <a href="https://cwfis.cfs.nrcan.gc.ca/" target="_blank" rel="noopener">Canadian Wildland Fire Information System</a> (NRCan), noon local standard time. Alerts, RDPS wind and precipitation and GOES satellite images from Environment and Climate Change Canada. Satellite fire detections from NASA FIRMS (VIIRS and MODIS); reported fires from CWFIS. Smoke forecasts: ECCC FireWork (RAQDPS-FW), BlueSky Canada (firesmoke.ca) and the ECCC EER wildland fire smoke plume model (MLDP, experimental). The PDF covers the day before the selected date through the end of the CWFIS forecast. <a href="/about">About this prototype</a>.</footer>

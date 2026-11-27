@@ -314,3 +314,7 @@ body.settings-open #controls { display: block; }
 .obs-ic.stale { opacity: .45; } .obs-ic.stale .a { color: #777 !important; }
 .obs-pop td { padding: 1px 8px 1px 0; } .obs-pop .sub { color: #5b6670; font-size: 12px; }
 #controls .obskey { font-size: 12px; color: #4a535b; margin: 2px 0 0; }
+#lg-main:not([hidden]) + #lg-snow:not([hidden]) { margin-top: 8px; padding-top: 6px; border-top: 1px solid #dde2e6; }
+#snow-date { max-width: 260px; }
+#legend img[hidden], #snow-img[hidden] { display: none; }
+#controls #basenote { margin-top: 4px; }

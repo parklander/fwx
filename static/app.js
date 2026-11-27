@@ -6,7 +6,21 @@
   const iso = (d) => d.toISOString().slice(0, 10);
   const today = iso(new Date(Date.now() - new Date().getTimezoneOffset() * 60000));
   const prefs = (() => { try { return JSON.parse(localStorage.getItem("cwfis-prefs") || "{}"); } catch (_) { return {}; } })();
-  const save = () => { try { localStorage.setItem("cwfis-prefs", JSON.stringify({ aoi: $("aoi").value, layer: $("layer").value, wind: $("wind").value, precip: $("precip").value, basemap: $("basemap").value, fires: $("fires").value, repfires: $("repfires").value, smoke: $("smoke").value })); } catch (_) {} };
+  const layerState = () => ({ layer: $("layer").value, wind: $("wind").value, precip: $("precip").value, basemap: $("basemap").value, fires: $("fires").value, repfires: $("repfires").value, smoke: $("smoke").value });
+  // usage beacon: page, base and layers on, for the admin page (see /about); never blocks anything
+  const TRK = window.FWXTrack || { init() {}, send() {}, act() {}, feedback() {} };
+  TRK.init("main", () => {
+    let base = ""; try { base = localStorage.getItem("fwx-base") || ""; } catch (_) {}
+    return { aoi: $("aoi").value, base, layers: layerState() };
+  });
+  const beacon = (ev, extra = {}) => TRK.send(ev, extra);
+  window.fwxBeacon = beacon;
+  window.fwxAct = (name) => TRK.act(name);
+  let beaconTimer = null;
+  const save = () => {
+    try { localStorage.setItem("cwfis-prefs", JSON.stringify({ aoi: $("aoi").value, ...layerState() })); } catch (_) {}
+    clearTimeout(beaconTimer); beaconTimer = setTimeout(() => beacon("layers"), 8000);  // after the user settles
+  };
 
   const map = L.map("map", { zoomControl: true }).setView([55, -97], 4);
 
@@ -321,11 +335,12 @@
     $("pdf").href = `/api/forecast.pdf?aoi=${encodeURIComponent($("aoi").value)}&start=${start}`;
   }
 
-  $("aoi").onchange = () => { save(); openPanel(); showArea(true); updatePdfLink(); };
-  $("country").onclick = showCountry;
+  $("aoi").onchange = () => { save(); openPanel(); showArea(true); updatePdfLink(); beacon("base"); };
+  $("country").onclick = () => { TRK.act("all_canada"); showCountry(); };
   $("layer").onchange = () => { save(); showLayer(); };
   $("date").onchange = () => { showLayer(); updatePdfLink(); };
   $("pdf").onclick = (e) => {
+    TRK.act("pdf");
     if (!$("aoi").value) { e.preventDefault(); status("Choose an area first, or set your base under Layers → My base."); return; }
     status("Building the PDF — CWFIS takes 10–30 s for a full forecast…");
   };
@@ -398,6 +413,7 @@
     renderAlerts();
   }
   $("alert-chip").onclick = () => {
+    TRK.act("alerts_list");
     alertsOpen = !alertsOpen; $("notify").hidden = true; closeSettings(); renderAlerts();
   };
   const aoiChange = $("aoi").onchange;
@@ -464,6 +480,7 @@
       sub = await swReg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64(key) });
     }
     mySub = await post("/api/push/subscribe", { subscription: sub.toJSON(), areas: chosen });
+    TRK.act("notify_on");
     await pushState();
     renderNotify(chosen === "all" ? "On for all areas." : `On for ${chosen.length} area${chosen.length > 1 ? "s" : ""}.`);
   }
@@ -474,6 +491,7 @@
     renderNotify("Notifications are off on this device.");
   }
   $("bell").onclick = async () => {
+    TRK.act("notify_menu");
     if (!$("notify").hidden) { $("notify").hidden = true; return; }
     alertsOpen = false; $("alerts").hidden = true; closeSettings();
     await pushState().catch(() => {});
@@ -743,13 +761,14 @@
     if (playing) playing = setTimeout(playStep, 900);
   }
   $("wb-play").onclick = () => {
+    TRK.act("timeline_play");
     if (playing) return stopPlay();
     $("wb-play").textContent = "❚❚"; $("wb-play").classList.add("on");
     playing = setTimeout(playStep, 0);
   };
-  $("wb-prev").onclick = () => { stopPlay(); step(-1); };
-  $("wb-next").onclick = () => { stopPlay(); step(1); };
-  $("wb-hour").oninput = () => { stopPlay(); showRdps(); };
+  $("wb-prev").onclick = () => { TRK.act("timeline_step"); stopPlay(); step(-1); };
+  $("wb-next").onclick = () => { TRK.act("timeline_step"); stopPlay(); step(1); };
+  $("wb-hour").oninput = () => { TRK.act("timeline_scrub"); stopPlay(); showRdps(); };
   $("wb-close").onclick = () => { $("wind").value = "off"; $("precip").value = "off"; $("smoke").value = "off"; save(); showRdps(); };
 
   // ---- smoke: ECCC FireWork (GeoMet WMS) and BlueSky Canada (hourly PNGs made from its netCDF; see smoke.py) ----
@@ -987,6 +1006,10 @@
   $("gear").onclick = () => { const open = !document.body.classList.contains("settings-open"); setSettings(open); remember(open); };
   $("lp-close").onclick = () => { closeSettings(); remember(false); };
   map.on("click", () => { if (phone.matches) closeSettings(); });
+  map.on("popupopen", (e) => {
+    const c = String(e.popup.getContent() || "");
+    TRK.act(c.includes("Satellite hotspot") ? "hotspot_popup" : c.includes("Source: CWFIS") ? "reported_fire_popup" : "map_popup");
+  });
   $("country2").onclick = () => { closeSettings(); $("country").click(); };
   // the Layers panel starts closed so the map and the forecast panel have the room; ☰ Layers opens it
   $("legend").onclick = () => $("legend").classList.toggle("collapsed");
@@ -1004,4 +1027,5 @@
   loadGoes();
   loadSnow();
   if (linked) { openPanel(); showArea(true); }
+  setTimeout(() => beacon("view"), 1500);
 })();

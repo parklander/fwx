@@ -3,17 +3,19 @@
 Run:  uvicorn app:app --host 127.0.0.1 --port 8000
 """
 import hashlib
+import html
 import json
 import logging
 import os
 import re
+import secrets
 import threading
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from fastapi import Body, FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.concurrency import run_in_threadpool
@@ -29,6 +31,8 @@ import push
 import report_pdf
 import rdps
 import wxpoint
+import health as health_mod
+import usage as usage_mod
 
 ROOT = Path(__file__).resolve().parent
 AOI_FILE = ROOT / "aois.json"
@@ -69,6 +73,23 @@ def _fire_push(area, hotspots):
 
 
 fire_data = fires.Fires(AOI_FILE, DATA, on_new=_fire_push)
+usage_log = usage_mod.Usage(DATA)
+ADMIN_TOKEN = os.environ.get("FW_ADMIN_TOKEN", "")  # turns on /admin; unset = no admin page
+
+health = health_mod.Health(DATA, notify=lambda title, body: pusher.notify_admin(title, body))
+health.add("ECCC alerts", health_mod.alerts_check(wx_alerts))
+health.add("CWFIS", health_mod.cwfis_check(cwfis, today))
+
+
+def _first_area():
+    doc = json.loads(AOI_FILE.read_text(encoding="utf-8"))
+    items = doc["areas"]
+    return next((a for a in items if a["id"] == doc.get("default")), items[0] if items else None)
+
+
+health.add("Open-Meteo forecast", health_mod.weather_check(wxpoint, _first_area))
+if os.environ.get("FW_FIRES", "1") != "0":
+    health.add("Fire detections", health_mod.fires_check(fire_data))
 _stop = threading.Event()
 
 
@@ -84,6 +105,15 @@ async def lifespan(app):
         threading.Thread(target=eer_plume.loop, args=(_stop,), name="eer", daemon=True).start()
         if eer_region:
             threading.Thread(target=eer_region.loop, args=(_stop,), name="eer_region", daemon=True).start()
+    if os.environ.get("FW_RDPS", os.environ.get("FW_WIND", "1")) != "0":
+        health.add("RDPS wind", health_mod.rdps_check(rdps_maps, rdps.run_time))
+    if os.environ.get("FW_SMOKE", "1") != "0":
+        health.add("EER smoke plume", health_mod.smoke_check(eer_plume))
+        if eer_region:
+            health.add("EER regional plume", health_mod.smoke_check(eer_region))
+        health.add("BlueSky smoke", health_mod.smoke_check(bluesky, seasonal=True))
+    if os.environ.get("FW_HEALTH", "1") != "0":
+        threading.Thread(target=health.loop, args=(_stop,), name="health", daemon=True).start()
     yield
     _stop.set()
 
@@ -151,8 +181,9 @@ async def forecast(aoi: str, start: str | None = Query(None, pattern=r"^\d{4}-\d
 
 
 @app.get("/api/forecast.pdf")
-async def forecast_pdf(aoi: str, start: str | None = Query(None, pattern=r"^\d{4}-\d\d-\d\d$")):
+async def forecast_pdf(request: Request, aoi: str, start: str | None = Query(None, pattern=r"^\d{4}-\d\d-\d\d$")):
     area = find_area(aoi)
+    usage_log.record(_ip(request), "main", "pdf", aoi=area["id"], ua=request.headers.get("user-agent"))
     first, last = await run_in_threadpool(_period, start)
     rows = await run_in_threadpool(cwfis.area_daily, area, first, last)
     if not rows:
@@ -404,6 +435,94 @@ async def push_test(endpoint: str = Body(..., embed=True)):
     return {"sent": True}
 
 
+# ---- usage beacons, the about page and the admin page ----------------------------------------------------
+
+def _ip(request):
+    return request.client.host if request.client else "?"
+
+
+@app.post("/api/usage", status_code=204)
+async def usage_beacon(request: Request):
+    """{page, ev, aoi, base, layers} from the pages; sent with navigator.sendBeacon (text/plain JSON)."""
+    try:
+        b = json.loads((await request.body())[:4000] or b"{}")
+    except ValueError:
+        return Response(status_code=204)
+    if isinstance(b, dict):
+        ok = usage_log.record(_ip(request), b.get("page"), b.get("ev", "view"), aoi=b.get("aoi"), base=b.get("base"),
+                              layers=b.get("layers"), ua=request.headers.get("user-agent"), sid=b.get("sid"),
+                              secs=b.get("secs"), act=b.get("act"), vote=b.get("vote"), text=b.get("text"))
+        if ok and b.get("ev") == "fb":  # feedback is rare and worth seeing right away
+            where = f" ({b['aoi']})" if isinstance(b.get("aoi"), str) and re.fullmatch(r"[\w-]{1,40}", b["aoi"]) else ""
+            text = re.sub(r"[\x00-\x1f\x7f]", " ", b["text"]) if isinstance(b.get("text"), str) else ""
+            await run_in_threadpool(pusher.notify_admin, f"FWX feedback {'👍' if b['vote'] == 'up' else '👎'}{where}",
+                                    text.strip()[:200] or "(no comment)")
+    return Response(status_code=204)
+
+
+def _admin(token):
+    if not ADMIN_TOKEN or not token or not secrets.compare_digest(token, ADMIN_TOKEN):
+        raise HTTPException(404)
+
+
+@app.get("/api/admin/usage")
+def admin_usage(days: int = Query(14, ge=1, le=120), exclude: str = "", x_admin_token: str = Header("")):
+    _admin(x_admin_token)
+    out = usage_log.summary(days, exclude={s.strip() for s in exclude.split(",") if s.strip()})
+    _, known = load_areas()
+    names = {a["id"]: a["name"] for a in known}
+    for b in out["by_base"]:
+        b["name"] = names.get(b["aoi"], b["aoi"])
+    return out
+
+
+@app.get("/api/admin/health")
+def admin_health(x_admin_token: str = Header("")):
+    _admin(x_admin_token)
+    return {"checks": health.report(), "admin_devices": pusher.admin_count()}
+
+
+@app.post("/api/admin/health/run")
+async def admin_health_run(x_admin_token: str = Header("")):
+    _admin(x_admin_token)
+    await run_in_threadpool(health.run_once)
+    return {"checks": health.report()}
+
+
+@app.post("/api/admin/push/subscribe")
+def admin_push_subscribe(subscription: dict = Body(...), label: str = Body(""), x_admin_token: str = Header("")):
+    _admin(x_admin_token)
+    try:
+        return {"admin_devices": pusher.add_admin(subscription, label)}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/admin/push/remove")
+def admin_push_remove(endpoint: str = Body(..., embed=True), x_admin_token: str = Header("")):
+    _admin(x_admin_token)
+    return {"admin_devices": pusher.remove_admin(endpoint)}
+
+
+@app.post("/api/admin/push/test")
+async def admin_push_test(x_admin_token: str = Header("")):
+    _admin(x_admin_token)
+    n = await run_in_threadpool(pusher.notify_admin, "FWX admin test", "Health notices will arrive like this.")
+    return {"sent": n}
+
+
+@app.get("/admin")
+def admin_page():
+    if not ADMIN_TOKEN:
+        raise HTTPException(404)
+    return Response(_ADMIN, media_type="text/html", headers={"Cache-Control": "no-cache", "X-Robots-Tag": "noindex"})
+
+
+@app.get("/about")
+def about_page():
+    return Response(_ABOUT, media_type="text/html", headers={"Cache-Control": "no-cache"})
+
+
 @app.get("/sw.js")
 def service_worker():
     # served from the root so it can handle notifications for the whole site
@@ -440,6 +559,18 @@ def index():
 
 
 _RANGE = _versioned_index("range.html")
+_ADMIN = _versioned_index("admin.html")
+
+
+def _about():
+    who = html.escape(os.environ.get("FW_ABOUT_CONTACT", "Rob, RTA Sustainability Officer, CFB Shilo"))
+    mail = os.environ.get("FW_ABOUT_EMAIL", "")
+    if re.fullmatch(r"[^@\s<>\"]+@[^@\s<>\"]+", mail):
+        who += f' · <a href="mailto:{html.escape(mail)}">{html.escape(mail)}</a>'
+    return _versioned_index("about.html").replace("{{CONTACT}}", who)
+
+
+_ABOUT = _about()
 
 
 _BETA = _versioned_index("beta.html")

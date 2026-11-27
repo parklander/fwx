@@ -21,6 +21,7 @@ class Push:
         self.dir.mkdir(parents=True, exist_ok=True)
         self.key_file = self.dir / "vapid.pem"
         self.subs_file = self.dir / "subscriptions.json"
+        self.admin_file = self.dir / "push_admins.json"  # devices that get FWX's own health notices
         self.lock = threading.Lock()
         self.contact = os.environ.get("FW_CONTACT", "https://fwx.rtams.ca")
         from py_vapid import Vapid
@@ -38,6 +39,54 @@ class Push:
             self.subs = json.loads(self.subs_file.read_text())
         except Exception:
             self.subs = {}
+
+    def _admins(self):
+        try:
+            return json.loads(self.admin_file.read_text())
+        except Exception:
+            return {}
+
+    def add_admin(self, subscription, label=""):
+        ep = subscription.get("endpoint")
+        if not ep or not str(ep).startswith("https://") or not subscription.get("keys"):
+            raise ValueError("not a push subscription")
+        with self.lock:
+            a = self._admins()
+            a[ep] = {"sub": subscription, "label": label[:60],
+                     "since": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+            self.admin_file.write_text(json.dumps(a, indent=1))
+            os.chmod(self.admin_file, 0o600)
+        return len(a)
+
+    def remove_admin(self, endpoint):
+        with self.lock:
+            a = self._admins()
+            a.pop(endpoint, None)
+            self.admin_file.write_text(json.dumps(a, indent=1))
+        return len(a)
+
+    def admin_count(self):
+        with self.lock:
+            return len(self._admins())
+
+    def notify_admin(self, title, body, url="/admin"):
+        """FWX's own problems (a feed down, a recovery) to the admin devices only."""
+        from pywebpush import WebPushException, webpush
+        with self.lock:
+            targets = self._admins()
+        sent = 0
+        for ep, s in targets.items():
+            try:
+                webpush(s["sub"], json.dumps({"title": title, "body": body[:240], "url": url, "tag": "fwx-admin|" + title}),
+                        vapid_private_key=self.vapid, vapid_claims={"sub": self.contact}, ttl=24 * 3600)
+                sent += 1
+            except WebPushException as e:
+                if getattr(e.response, "status_code", None) in (404, 410):
+                    self.remove_admin(ep)
+                else:
+                    log.warning("admin push failed: %s", e)
+        log.info("admin notice %r to %d device(s)", title, sent)
+        return sent
 
     def _save(self):
         tmp = self.subs_file.with_suffix(".tmp")

@@ -71,6 +71,7 @@
   sheet.querySelectorAll(".tabs button").forEach((b) => (b.onclick = () => {
     tab = b.dataset.tab;
     try { localStorage.setItem("fwx-tab", tab); } catch (_) {}
+    window.fwxBeacon?.("tab", { layers: { tab } });
     if (sheet.classList.contains("min")) setMin(false); else render();
   }));
 
@@ -150,11 +151,13 @@
     else body.innerHTML = fwiTab();
     body.querySelectorAll("[data-rxrange]").forEach((b) => (b.onclick = () => {
       rxRange = +b.dataset.rxrange;
+      window.fwxAct?.("burn_window_range");
       try { localStorage.setItem("fwx-rx-range", rxRange); } catch (_) {}
       render();
     }));
     body.querySelectorAll("[data-range]").forEach((b) => (b.onclick = () => {
       range = +b.dataset.range;
+      window.fwxAct?.("forecast_range");
       try { localStorage.setItem("fwx-range", range); } catch (_) {}
       render();
     }));
@@ -509,7 +512,7 @@
       b.onclick = pick;
       b.onmouseenter = pick;
     });
-    $("rx-edit-t").onclick = () => { rxEdit = !rxEdit; render(); };
+    $("rx-edit-t").onclick = () => { rxEdit = !rxEdit; if (rxEdit) window.fwxAct?.("burn_limits_edit"); render(); };
     if (!rxEdit) return;
     body.querySelectorAll(".rxed input").forEach((el) => (el.onchange = () => {
       const c = rx(), k = el.dataset.k, f = el.dataset.f;

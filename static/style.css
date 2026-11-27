@@ -302,3 +302,5 @@ body.settings-open #controls { display: block; }
 #wb-wk .wkbar i { flex: 1; }
 #wb-wk .wkticks { grid-column: 1; grid-row: 2; position: relative; height: 13px; font-size: 10.5px; color: #3c444c; }
 #wb-wk .wkticks span { position: absolute; top: 0; transform: translateX(-50%); white-space: nowrap; }
+#controls .aboutlink { display: block; margin: 10px 0 4px; font-weight: 600; }
+#controls .fblink { margin: 0 0 8px; }

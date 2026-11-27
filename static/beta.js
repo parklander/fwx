@@ -68,7 +68,13 @@
   }
 
   // ---- the status ------------------------------------------------------------------------------------
+  let beaconed = false;
+  const TRK = window.FWXTrack || { init() {}, send() {}, act() {} };
+  TRK.init("beta", () => ({ aoi: areaId }));
+  const beacon = (ev) => TRK.send(ev);
+  ["lnk-map", "lnk-burn", "lnk-pdf", "lnk-panel"].forEach((id) => { const a = document.getElementById(id); if (a) a.addEventListener("click", () => TRK.act(id.replace("lnk-", "link_"))); });
   async function load() {
+    beacon(beaconed ? "base" : "view"); beaconed = true;
     if (!areaId) {
       $("status").className = "status lvl-x"; $("st-word").textContent = "Choose your base";
       $("st-head").textContent = "Pick it in the list above; this browser remembers it."; return;
@@ -182,7 +188,7 @@
       i += k;
     }
     $("timeline").innerHTML = html;
-    $("timeline").querySelectorAll(".c").forEach((el) => el.onclick = () => { sel = +el.dataset.i; renderTimeline(); });
+    $("timeline").querySelectorAll(".c").forEach((el) => el.onclick = () => { TRK.act("timeline_hour"); sel = +el.dataset.i; renderTimeline(); });
     readout();
   }
 

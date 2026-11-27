@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>About FWX · Fire Weather prototype</title>
+<link rel="icon" href="/static/icon-192.png">
+<meta name="theme-color" content="#1d2329">
+<style>
+  :root { --ink: #1d2329; --mute: #5b6670; --line: #dde2e6; --accent: #eb6834; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--ink); background: #f6f7f8; }
+  header { background: var(--ink); color: #fff; padding: 12px 20px; display: flex; gap: 16px; align-items: baseline; flex-wrap: wrap; }
+  header b { font-size: 18px; letter-spacing: .02em; }
+  header a { color: #cfd6dc; text-decoration: none; font-size: 14px; }
+  header a:hover { color: #fff; }
+  main { max-width: 780px; margin: 0 auto; padding: 24px 20px 48px; }
+  h1 { font-size: 26px; margin: 0 0 6px; }
+  h2 { font-size: 18px; margin: 30px 0 8px; padding-top: 14px; border-top: 1px solid var(--line); }
+  .lede { color: var(--mute); margin: 0 0 18px; }
+  .note { background: #fff4e5; border-left: 4px solid var(--accent); padding: 12px 14px; border-radius: 4px; }
+  ul { padding-left: 20px; } li { margin: 4px 0; }
+  a { color: #1f5fa8; }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; margin: 0; }
+  dt { font-weight: 600; } dd { margin: 0; color: #333; }
+  @media (max-width: 560px) { dl { grid-template-columns: 1fr; } dd { margin-bottom: 8px; } }
+  footer { color: var(--mute); font-size: 13px; text-align: center; padding: 20px; }
+</style>
+</head>
+<body>
+<header>
+  <b>FWX</b>
+  <a href="/">Map</a>
+  <a href="/range">Alert panel</a>
+  <a href="/beta">Beta</a>
+</header>
+<main>
+  <h1>About FWX</h1>
+  <p class="lede">A fire weather and fire readiness tool for Canadian Armed Forces training areas, built at CFB Shilo.</p>
+
+  <p class="note"><b>This is a prototype.</b> It is not an official DND, CAF or CFFM product, and it is not monitored around the clock.
+    It brings together public forecasts and fire information to support decisions. It does not replace official forecasts
+    and alerts, the Base Fire Chief, range control or the fire danger and training restrictions in force at your base.</p>
+
+  <h2>What it's for</h2>
+  <p>Range control, base fire halls and fire planners need to know, in one place and early enough to act:</p>
+  <ul>
+    <li>how dangerous fire conditions are today and over the next few days at their training area;</li>
+    <li>whether Environment and Climate Change Canada (ECCC) has an alert in effect, such as a strong cold front or high winds;</li>
+    <li>when wind, humidity and temperature turn against them during the day: wind shifts, gusts, crossover and 30/30/30 hours;</li>
+    <li>whether there are fires or satellite heat detections nearby, or smoke on the way;</li>
+    <li>when conditions fit a prescribed burn's limits.</li>
+  </ul>
+
+  <h2>What's on the site</h2>
+  <dl>
+    <dt><a href="/">Map</a></dt><dd>Fire danger and fire weather maps, wind, precipitation and smoke forecasts, fire detections, and a forecast
+      panel for each base with hourly conditions and burn windows.</dd>
+    <dt>Forecast PDF</dt><dd>A printable briefing: a fire danger calendar and daily values for the base.</dd>
+    <dt><a href="/range">Alert panel</a></dt><dd>A wall display for range control or the fire hall. It shows ECCC alerts for the base, lets staff acknowledge them,
+      and shows the next hours of wind, fire danger, nearby fires and smoke.</dd>
+    <dt>Notifications</dt><dd>Your phone or computer can get a notification when ECCC issues a new alert for the bases you pick (Layers → Notify me).</dd>
+    <dt><a href="/beta">Beta</a></dt><dd>A test layout that starts from a single status for the base and a 48-hour timeline.</dd>
+  </dl>
+
+  <h2>Where the information comes from</h2>
+  <p>All of it is public, open data. No DND data is used.</p>
+  <ul>
+    <li><b>Fire danger and Fire Weather Index (FWI) codes:</b> <a href="https://cwfis.cfs.nrcan.gc.ca/" target="_blank" rel="noopener">Canadian Wildland Fire Information System</a> (CWFIS, Natural Resources Canada), daily.</li>
+    <li><b>Alerts, wind, precipitation and satellite images:</b> Environment and Climate Change Canada (ECCC alerts, the RDPS model and GOES imagery through ECCC GeoMet).</li>
+    <li><b>Hourly point forecast:</b> the ECCC GEM models, through <a href="https://open-meteo.com/" target="_blank" rel="noopener">Open-Meteo</a>.</li>
+    <li><b>Fire detections:</b> NASA <a href="https://firms.modaps.eosdis.nasa.gov/" target="_blank" rel="noopener">FIRMS</a> (VIIRS and MODIS satellite hotspots) and fires reported to CWFIS by the provinces and territories.</li>
+    <li><b>Smoke:</b> ECCC FireWork, the ECCC Environmental Emergency Response (EER) smoke plume model, and <a href="https://firesmoke.ca/" target="_blank" rel="noopener">BlueSky Canada</a>.</li>
+  </ul>
+
+  <h2>What FWX works out itself</h2>
+  <ul>
+    <li><b>Hourly FWI:</b> calculated from the hourly forecast, starting from CWFIS's daily codes. It shows when in the day conditions peak.
+      It is not an official rating. The official daily fire danger class is always CWFIS's.</li>
+    <li><b>Burn windows:</b> forecast hours compared with prescription limits. The limits can be adjusted and currently follow CFFM recommendations.</li>
+    <li><b>Crossover and 30/30/30:</b> hours when relative humidity (%) falls to or below the temperature (°C), and when temperature is 30 °C or more,
+      RH is 30% or less and wind is 30 km/h or more.</li>
+    <li><b>Smoke outlook:</b> the highest forecast near-ground fine particulate (PM2.5) over the base. 35 µg/m³ counts as elevated and 100 as high.</li>
+    <li><b>Base status</b> (beta): draft rules that combine the above. They are still being tested.</li>
+  </ul>
+
+  <h2>Limits to keep in mind</h2>
+  <ul>
+    <li>Forecasts can be wrong, and models disagree, especially for wind shifts and thunderstorms. Check what you see on the ground.</li>
+    <li>A satellite hotspot is a heat signal. It may be a range fire, a prescribed burn, a flare or a wildfire, and small or brief fires are often missed.</li>
+    <li>Each feed can be late or unavailable. Each panel shows when its data was last updated.</li>
+    <li>The site runs on one small server. If it is down, use the original sources above.</li>
+  </ul>
+
+  <h2>What this site records</h2>
+  <p>To learn which features are useful, FWX logs page views with the time, your IP address, the page, the base you looked at,
+    which map layers were on, which features were used, how long the page was on screen, a short device type (for example "Windows Edge")
+    and any feedback you send. The log is kept for about four months,
+    is used only to improve the tool and is not shared. There are no accounts and no tracking cookies. Your settings, such as your base
+    and layers, are saved in your own browser.</p>
+
+  <h2>Contact</h2>
+  <p>Questions, problems and suggestions: {{CONTACT}}.
+    Or <a href="#" onclick="window.FWXTrack && FWXTrack.feedback(); return false;">send quick feedback</a> from any page.</p>
+</main>
+<footer>FWX · prototype · built with open data</footer>
+<script src="/static/track.js"></script>
+<script>
+  if (window.FWXTrack) { FWXTrack.init("about"); FWXTrack.send("view"); }
+</script>
+</body>
+</html>

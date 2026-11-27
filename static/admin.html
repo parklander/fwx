@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>FWX admin</title>
+<link rel="icon" href="/static/icon-192.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<style>
+  :root { --ink: #1d2329; --mute: #5b6670; --line: #dde2e6; --ok: #2e7d32; --bad: #b3261e; --bar: #eb6834; }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color: var(--ink); background: #f6f7f8; }
+  header { background: var(--ink); color: #fff; padding: 10px 18px; display: flex; gap: 14px; align-items: baseline; }
+  header a { color: #cfd6dc; text-decoration: none; }
+  main { max-width: 1100px; margin: 0 auto; padding: 16px 18px 40px; display: grid; gap: 16px; }
+  section { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; }
+  h2 { font-size: 16px; margin: 0 0 10px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  h2 small { font-weight: 400; color: var(--mute); }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-weight: 600; color: var(--mute); font-size: 12px; }
+  td.n { text-align: right; font-variant-numeric: tabular-nums; }
+  .ok { color: var(--ok); font-weight: 700; } .bad { color: var(--bad); font-weight: 700; }
+  .muted { color: var(--mute); }
+  .bar { height: 10px; background: var(--bar); border-radius: 2px; min-width: 2px; }
+  .barcell { width: 40%; }
+  button, select, input { font: inherit; padding: 5px 10px; border: 1px solid #b9c1c8; border-radius: 6px; background: #fff; }
+  button { cursor: pointer; } button.primary { background: var(--ink); color: #fff; border-color: var(--ink); }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 800px) { .cols { grid-template-columns: 1fr; } }
+  .chips span { display: inline-block; background: #eef1f3; border-radius: 10px; padding: 0 7px; margin: 1px 3px 1px 0; font-size: 12px; }
+  #msg { color: var(--mute); }
+  .scroll { overflow-x: auto; }
+  .split { display: flex; height: 12px; border-radius: 3px; overflow: hidden; min-width: 160px; }
+  .split i { display: block; } .g { background: #c9d3db; } .c { background: #f2a978; } .w { background: #c4511f; }
+  .fbt { white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<header><b>FWX admin</b><a href="/">Map</a><a href="/about">About</a></header>
+<main>
+  <section id="locked" hidden>
+    <h2>Admin key</h2>
+    <p class="muted">Open this page as <code>/admin#t=&lt;FW_ADMIN_TOKEN&gt;</code> once on each device; the key is then kept in this browser.</p>
+    <div class="row"><input id="tok" type="password" placeholder="admin key" size="40"><button id="tok-go" class="primary">Open</button></div>
+  </section>
+
+  <section id="health-s" hidden>
+    <h2>Data feeds <small id="h-when"></small>
+      <button id="h-run">Check now</button></h2>
+    <div class="scroll"><table id="h-tab"></table></div>
+    <h2 style="margin-top:16px">Problem notifications <small id="p-count"></small></h2>
+    <p class="muted">A feed has to fail two checks in a row (about 20 min) before you're notified, and you get one notice when it recovers.
+      These go only to devices added here, not to people who signed up for weather alerts.
+      If the whole server is down nothing can be sent from it, so the DigitalOcean uptime check covers that by email.</p>
+    <div class="row"><button id="p-add" class="primary">Send FWX problems to this device</button><button id="p-test">Send a test</button>
+      <button id="p-rm">Remove this device</button><span id="msg"></span></div>
+  </section>
+
+  <section id="usage-s" hidden>
+    <h2>Usage
+      <select id="days"><option value="7">7 days</option><option value="14" selected>14 days</option><option value="30">30 days</option><option value="90">90 days</option></select>
+      <input id="excl" placeholder="leave out IPs (yours), comma-separated" size="38">
+      <button id="u-go">Update</button><small id="u-tot"></small></h2>
+    <h2>Feedback <small id="u-fbv"></small></h2>
+    <div class="scroll"><table id="u-fb"></table></div>
+    <h2 style="margin-top:12px">Visits <small>time with the page on screen, per open tab</small></h2>
+    <div class="scroll"><table id="u-visit"></table></div>
+    <div class="cols" style="margin-top:12px">
+      <div><h2>Features used <small>share of visits that used it at least once</small></h2><table id="u-act"></table></div>
+      <div><h2>Coming back <small>IP addresses by number of days they visited</small></h2><table id="u-ret"></table></div>
+    </div>
+    <div class="cols" style="margin-top:12px">
+      <div><h2>By day <small>page views · different IPs</small></h2><table id="u-day"></table></div>
+      <div><h2>By base <small>views · different IPs · PDFs</small></h2><table id="u-base"></table></div>
+    </div>
+    <div class="cols" style="margin-top:12px">
+      <div><h2>Layers used on the map <small id="u-lnote"></small></h2><table id="u-layer"></table></div>
+      <div><h2>Pages <small>views</small></h2><table id="u-page"></table>
+        <h2 style="margin-top:12px">Forecast panel tabs <small>opened</small></h2><table id="u-tab"></table></div>
+    </div>
+    <h2 style="margin-top:12px">By IP address <small>click an address to look up who owns it</small></h2>
+    <div class="scroll"><table id="u-ip"></table></div>
+  </section>
+</main>
+<script src="/static/admin.js"></script>
+</body>
+</html>

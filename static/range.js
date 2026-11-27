@@ -87,8 +87,14 @@
       + (base ? `<optgroup label="My base">${opt(byId[base])}</optgroup>` : "")
       + order.map((p) => `<optgroup label="${esc(p)}">${groups[p].sort((x, y) => sortKey(x.name).localeCompare(sortKey(y.name))).map(opt).join("")}</optgroup>`).join("");
     $("area").value = areaId || "";
+    const TRK = window.FWXTrack || { init() {}, send() {}, act() {} };
+    if (!window.fwxRangeInit) { window.fwxRangeInit = true; TRK.init("range", () => ({ aoi: areaId })); }
+    const beacon = (ev) => TRK.send(ev);
+    window.fwxAct = (n) => TRK.act(n);
+    beacon("view");
     $("area").onchange = () => {
       areaId = $("area").value;
+      beacon("base");
       try { localStorage.setItem("fwx-range-aoi", areaId); } catch (_) {}
       const u = new URL(location.href); u.searchParams.set("aoi", areaId); history.replaceState(null, "", u);
       render(); loadWx(); loadLog(); loadFires(); loadSmoke();
@@ -202,6 +208,7 @@
       const j = await r.json();
       if (!r.ok) throw new Error(j.detail || r.status);
       $("ackDlg").hidden = true;
+      window.fwxAct?.("alert_ack");
       await loadAlerts(); loadLog();
     } catch (err) { $("ackErr").textContent = "Not saved: " + err.message; }
   };

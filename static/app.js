@@ -6,7 +6,7 @@
   const iso = (d) => d.toISOString().slice(0, 10);
   const today = iso(new Date(Date.now() - new Date().getTimezoneOffset() * 60000));
   const prefs = (() => { try { return JSON.parse(localStorage.getItem("cwfis-prefs") || "{}"); } catch (_) { return {}; } })();
-  const layerState = () => ({ layer: $("layer").value, wind: $("wind").value, precip: $("precip").value, basemap: $("basemap").value, fires: $("fires").value, repfires: $("repfires").value, smoke: $("smoke").value });
+  const layerState = () => ({ layer: $("layer").value, wind: $("wind").value, precip: $("precip").value, basemap: $("basemap").value, fires: $("fires").value, repfires: $("repfires").value, smoke: $("smoke").value, obs: $("obs").value });
   // usage beacon: page, base and layers on, for the admin page (see /about); never blocks anything
   const TRK = window.FWXTrack || { init() {}, send() {}, act() {}, feedback() {} };
   TRK.init("main", () => {
@@ -979,6 +979,96 @@
   setInterval(() => { if ($("repfires").value !== "off") loadReported(); }, 30 * 60e3);
   loadHotspots(true); loadReported();
 
+  // ---- station observations: ECCC (Canada) and Manitoba's fire weather network, latest reading each ----------
+  map.createPane("obs");
+  map.getPane("obs").style.zIndex = 460;  // over fires and labels, under popups
+  const obsCanvas = L.canvas({ pane: "obs", padding: 0.3 });
+  const obsLayer = L.layerGroup();
+  // only what's in view (plus a margin), and only from OBS_MIN_ZOOM in: zoomed out to all of Canada nothing is fetched
+  const OBS_MIN_ZOOM = 6, OBS_FRESH_MS = 5 * 60e3;
+  let OBS = null, obsTimer = null, obsMove = null, obsBox = null, obsAt = 0;
+  const OBS_COMPASS = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
+  const obsCol = (s) => (s == null ? "#777" : (window.WindLayer?.RAMP || [[Infinity, "#1e8cf0"]]).find(([top]) => s < top)[1]);
+  const obsAge = (t) => (Date.now() - Date.parse(t)) / 60e3;
+  const obsWhen = (t) => {
+    const m = Math.round(obsAge(t));
+    const hm = new Date(t).toLocaleTimeString("en-CA", { hour: "2-digit", minute: "2-digit", hour12: false });
+    return `${hm} (${m < 90 ? `${m} min` : `${Math.round(m / 60)} h`} ago)`;
+  };
+  const obsVal = (v, unit = "", d = 0) => (v == null ? "–" : `${d ? v.toFixed(d) : Math.round(v)}${unit}`);
+  function obsPopup(s) {
+    const net = s.src === "MB" ? `Manitoba fire weather network · ${escF(s.owner)}${s.zone && s.zone !== "na" ? ` · ${escF(s.zone)} zone` : ""}` : `ECCC · ${escF(s.owner)}`;
+    return `<div class="obs-pop"><b>${escF(s.name)}</b><div class="sub">${net}</div>
+      <div class="sub">Observed ${escF(obsWhen(s.t))}</div>
+      <table><tr><td>Temperature</td><td><b>${obsVal(s.temp, " °C", 1)}</b></td></tr>
+      <tr><td>Humidity</td><td><b>${obsVal(s.rh, "%")}</b></td></tr>
+      <tr><td>Wind</td><td><b>${s.wd != null ? OBS_COMPASS[Math.round(s.wd / 22.5) % 16] + " " : ""}${obsVal(s.ws, " km/h")}</b>${s.gust != null ? `, gusts ${obsVal(s.gust)}` : ""}</td></tr>
+      <tr><td>Rain, last hour</td><td>${obsVal(s.rain1h, " mm", 1)}</td></tr></table>
+      <div class="sub" id="obs-hist-${escF(s.id.replace(/\W/g, "_"))}">${s.src === "MB" ? "Loading the last 24 h…" : ""}</div></div>`;
+  }
+  async function obsHistory(s) {
+    if (s.src !== "MB") return;
+    const el = document.getElementById(`obs-hist-${s.id.replace(/\W/g, "_")}`);
+    try {
+      const j = await (await fetch(`/api/obs/history/${encodeURIComponent(s.id)}`)).json();
+      const rows = j.rows || [];
+      if (!rows.length || !el) { if (el) el.textContent = ""; return; }
+      const hm = (t) => new Date(t).toLocaleTimeString("en-CA", { hour: "2-digit", minute: "2-digit", hour12: false });
+      const minRh = rows.filter((r) => r.rh != null).reduce((a, r) => (!a || r.rh < a.rh ? r : a), null);
+      const maxG = rows.filter((r) => r.gust != null).reduce((a, r) => (!a || r.gust > a.gust ? r : a), null);
+      const maxT = rows.filter((r) => r.temp != null).reduce((a, r) => (!a || r.temp > a.temp ? r : a), null);
+      const rain = rows.reduce((a, r) => a + (r.rain1h || 0), 0);
+      el.innerHTML = `Last 24 h: high ${maxT ? `${maxT.temp.toFixed(1)} °C at ${hm(maxT.t)}` : "–"} · lowest RH ${minRh ? `${Math.round(minRh.rh)}% at ${hm(minRh.t)}` : "–"}
+        · strongest gust ${maxG ? `${Math.round(maxG.gust)} km/h at ${hm(maxG.t)}` : "–"} · rain ${rain.toFixed(1)} mm`;
+    } catch (_) { if (el) el.textContent = ""; }
+  }
+  function drawObs() {
+    obsLayer.clearLayers();
+    if ($("obs").value === "off" || !OBS) return;
+    const b = map.getBounds().pad(0.15), z = map.getZoom(), stale = OBS.stale_min || 75;
+    const inView = OBS.stations.filter((s) => b.contains([s.lat, s.lon]));
+    if (z < 7 || inView.length > 450) {  // zoomed out: coloured dots only
+      for (const s of inView) {
+        const old = obsAge(s.t) > stale;
+        L.circleMarker([s.lat, s.lon], { renderer: obsCanvas, radius: z < 5 ? 3 : 4.5, weight: 1, color: "#fff",
+          fillColor: old ? "#999" : obsCol(s.ws), fillOpacity: old ? 0.5 : 0.95 })
+          .bindPopup(() => obsPopup(s)).on("popupopen", () => obsHistory(s)).addTo(obsLayer);
+      }
+    } else {
+      for (const s of inView) {
+        const old = obsAge(s.t) > stale;
+        const arrow = s.wd != null && s.ws != null && s.ws >= 1
+          ? `<div class="a" style="color:${obsCol(s.ws)};transform:rotate(${(s.wd + 180) % 360}deg)">↑</div>`
+          : `<div class="a" style="color:#555">○</div>`;
+        const lab = `${obsVal(s.temp, "°")} ${obsVal(s.rh, "%")}${s.ws != null ? `<br>${obsVal(s.ws)}${s.gust != null && s.gust >= s.ws + 8 ? `G${obsVal(s.gust)}` : ""}` : ""}`;
+        L.marker([s.lat, s.lon], { pane: "obs", keyboard: false, title: s.name,
+          icon: L.divIcon({ className: `obs-ic${old ? " stale" : ""}`, html: `${arrow}<div class="l">${lab}</div>`, iconSize: [22, 22], iconAnchor: [11, 11] }) })
+          .bindPopup(() => obsPopup(s)).on("popupopen", () => obsHistory(s)).addTo(obsLayer);
+      }
+    }
+    if (!map.hasLayer(obsLayer)) obsLayer.addTo(map);
+  }
+  async function loadObs(force = false) {
+    const on = $("obs").value !== "off", far = map.getZoom() < OBS_MIN_ZOOM;
+    $("obskey").hidden = !on;
+    $("obshint").hidden = !on || !far;
+    if (!on || far) { obsLayer.clearLayers(); map.removeLayer(obsLayer); return; }
+    const view = map.getBounds();
+    if (!force && OBS && obsBox && obsBox.contains(view) && Date.now() - obsAt < OBS_FRESH_MS) { drawObs(); return; }
+    const box = view.pad(0.5), f = (v) => v.toFixed(2);
+    const bbox = [f(box.getWest()), f(box.getSouth()), f(box.getEast()), f(box.getNorth())].join(",");
+    try {
+      const j = await (await fetch(`/api/obs?bbox=${bbox}`, { cache: "no-store" })).json();
+      OBS = j; obsBox = box; obsAt = Date.now();
+    } catch (_) { /* keep what we had */ }
+    drawObs();
+  }
+  map.on("moveend", () => { if ($("obs").value !== "off") { clearTimeout(obsMove); obsMove = setTimeout(() => loadObs(false), 250); } });
+  obsTimer = setInterval(() => { if ($("obs").value !== "off") loadObs(true); }, OBS_FRESH_MS);
+  $("obs").value = prefs.obs === "on" ? "on" : "off";
+  $("obs").onchange = () => { save(); loadObs(true); if (window.matchMedia("(max-width: 700px)").matches) closeSettings(); };
+  loadObs();
+
   $("wind").value = ["particles", "arrows"].includes(prefs.wind) ? prefs.wind : "off";
   $("precip").value = ["on", "snow"].includes(prefs.precip) ? prefs.precip : "off";
   $("basemap").onchange = () => {
@@ -1008,7 +1098,7 @@
   map.on("click", () => { if (phone.matches) closeSettings(); });
   map.on("popupopen", (e) => {
     const c = String(e.popup.getContent() || "");
-    TRK.act(c.includes("Satellite hotspot") ? "hotspot_popup" : c.includes("Source: CWFIS") ? "reported_fire_popup" : "map_popup");
+    TRK.act(c.includes("Satellite hotspot") ? "hotspot_popup" : c.includes("Source: CWFIS") ? "reported_fire_popup" : c.includes("obs-pop") ? "station_popup" : "map_popup");
   });
   $("country2").onclick = () => { closeSettings(); $("country").click(); };
   // the Layers panel starts closed so the map and the forecast panel have the room; ☰ Layers opens it

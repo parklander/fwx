@@ -31,6 +31,7 @@ import push
 import report_pdf
 import rdps
 import wxpoint
+import obs as obs_mod
 import health as health_mod
 import usage as usage_mod
 
@@ -74,6 +75,7 @@ def _fire_push(area, hotspots):
 
 fire_data = fires.Fires(AOI_FILE, DATA, on_new=_fire_push)
 usage_log = usage_mod.Usage(DATA)
+obs_data = obs_mod.Obs()  # current station observations: ECCC (Canada) and Manitoba's fire weather network
 ADMIN_TOKEN = os.environ.get("FW_ADMIN_TOKEN", "")  # turns on /admin; unset = no admin page
 
 health = health_mod.Health(DATA, notify=lambda title, body: pusher.notify_admin(title, body))
@@ -90,6 +92,8 @@ def _first_area():
 health.add("Open-Meteo forecast", health_mod.weather_check(wxpoint, _first_area))
 if os.environ.get("FW_FIRES", "1") != "0":
     health.add("Fire detections", health_mod.fires_check(fire_data))
+if os.environ.get("FW_OBS", "1") != "0":
+    health.add("Station observations", health_mod.obs_check(obs_data))
 _stop = threading.Event()
 
 
@@ -112,6 +116,8 @@ async def lifespan(app):
         if eer_region:
             health.add("EER regional plume", health_mod.smoke_check(eer_region))
         health.add("BlueSky smoke", health_mod.smoke_check(bluesky, seasonal=True))
+    if os.environ.get("FW_OBS", "1") != "0":
+        threading.Thread(target=obs_data.loop, args=(_stop,), name="obs", daemon=True).start()
     if os.environ.get("FW_HEALTH", "1") != "0":
         threading.Thread(target=health.loop, args=(_stop,), name="health", daemon=True).start()
     yield
@@ -214,6 +220,9 @@ def _area_panel(area):
         log.warning("CWFIS for %s: %s", area["id"], e)
         out["errors"]["cwfis"] = "CWFIS isn't answering right now"
     out["smoke"] = smoke.area_outlook(area["id"], (eer_plume, bluesky))
+    b = area.get("bbox")
+    lat, lon = ((b[1] + b[3]) / 2, (b[0] + b[2]) / 2) if b else (area["lat"], area["lon"])
+    out["obs"] = obs_data.near(lat, lon)
     try:
         out["weather"] = wxpoint.area_weather(area, rows)
     except Exception as e:
@@ -391,6 +400,22 @@ def fire_map(bbox: str | None = Query(None, pattern=r"^-?[\d.]+,-?[\d.]+,-?[\d.]
     """Satellite hotspots (last `hours`) and the agency-reported fires in effect now (not time-limited)."""
     box = tuple(float(v) for v in bbox.split(",")) if bbox else None
     return fire_data.geojson(box, hours, hotspots=hotspots, reported=reported)
+
+
+@app.get("/api/obs")
+def observations(bbox: str | None = Query(None, pattern=r"^-?[\d.]+,-?[\d.]+,-?[\d.]+,-?[\d.]+$")):
+    """Latest reading at each station (ECCC and Manitoba), optionally inside west,south,east,north."""
+    box = tuple(float(x) for x in bbox.split(",")) if bbox else None
+    return Response(json.dumps(obs_data.stations(box), separators=(",", ":")), media_type="application/json",
+                    headers={"Cache-Control": "public, max-age=120"})
+
+
+@app.get("/api/obs/history/{sid}")
+def observation_history(sid: str):
+    """The last 24 h of hourly readings for a Manitoba station (ECCC readings aren't kept)."""
+    if not re.fullmatch(r"[a-z]+:[\w-]{1,40}", sid):
+        raise HTTPException(404)
+    return {"id": sid, "rows": obs_data.history(sid)}
 
 
 @app.get("/api/fires/area/{aoi}")

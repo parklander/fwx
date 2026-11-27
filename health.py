@@ -169,3 +169,22 @@ def smoke_check(src, seasonal=False):
             return False, f"{src.label}: latest run is more than 18 h old."
         return True, f"{src.label} OK."
     return fn
+
+
+def obs_check(obs_data):
+    def fn():
+        with obs_data.lock:
+            st = json.loads(json.dumps(obs_data.status))
+        msgs, ok = [], True
+        for key, label, max_h in (("eccc", "ECCC stations", 0.75), ("mb", "Manitoba stations", 2.5)):
+            s = st[key]
+            age = _age_h(s.get("ok"))
+            if s.get("checked") is None:
+                continue  # not polled yet since the restart
+            if age is None or age > max_h:
+                ok = False
+                msgs.append(f"{label}: {s.get('error') or 'no good update'}" + (f" ({age:.1f} h since the last good one)" if age else ""))
+            else:
+                msgs.append(f"{label}: {s.get('n')}")
+        return ok, "; ".join(msgs) or "Not polled yet."
+    return fn

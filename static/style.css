@@ -304,3 +304,13 @@ body.settings-open #controls { display: block; }
 #wb-wk .wkticks span { position: absolute; top: 0; transform: translateX(-50%); white-space: nowrap; }
 #controls .aboutlink { display: block; margin: 10px 0 4px; font-weight: 600; }
 #controls .fblink { margin: 0 0 8px; }
+.obsnow { font-size: 13px; background: #f1f5f8; border-left: 3px solid #2f6fd6; padding: 5px 8px; margin: 0 0 6px; border-radius: 3px; }
+.obsnow .s { font-size: 12px; color: #4a535b; }
+.obs-ic { pointer-events: auto; }
+.obs-ic .a { position: absolute; left: 0; top: 0; width: 22px; height: 22px; font: 700 18px/22px system-ui, sans-serif; text-align: center;
+  text-shadow: 0 0 2px #fff, 0 0 2px #fff; }
+.obs-ic .l { position: absolute; left: 21px; top: 3px; white-space: nowrap; font: 600 11px/1.15 system-ui, sans-serif; color: #111;
+  background: rgba(255,255,255,.82); border-radius: 3px; padding: 0 3px; }
+.obs-ic.stale { opacity: .45; } .obs-ic.stale .a { color: #777 !important; }
+.obs-pop td { padding: 1px 8px 1px 0; } .obs-pop .sub { color: #5b6670; font-size: 12px; }
+#controls .obskey { font-size: 12px; color: #4a535b; margin: 2px 0 0; }

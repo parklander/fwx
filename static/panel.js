@@ -145,9 +145,9 @@
       $("sh-sub").textContent = t ? `${wmo(t.code)[0]} ${r0(t.tmax)}° / ${r0(t.tmin)}°` : "";
     }
     const body = $("sh-body");
-    if (tab === "fc") body.innerHTML = forecastTab();
-    else if (tab === "fw") { body.innerHTML = fireTab(); drawCharts(); }
-    else if (tab === "rx") { body.innerHTML = rxTab(); wireRx(); }
+    if (tab === "fc") body.innerHTML = obsLine() + forecastTab();
+    else if (tab === "fw") { body.innerHTML = obsLine() + fireTab(); drawCharts(); }
+    else if (tab === "rx") { body.innerHTML = obsLine() + rxTab(); wireRx(); }
     else body.innerHTML = fwiTab();
     body.querySelectorAll("[data-rxrange]").forEach((b) => (b.onclick = () => {
       rxRange = +b.dataset.rxrange;
@@ -166,6 +166,26 @@
   const err = (k) => (DATA.errors?.[k] ? `<p class="sub pad">${esc(DATA.errors[k])}.</p>` : "");
 
   // ---- tab 1: forecast -------------------------------------------------------------------------------
+  // observed now at the nearest station(s), next to the forecast for this hour: is the forecast running warm, dry or windy?
+  function obsLine() {
+    const st = DATA.obs || [];
+    if (!st.length) return "";
+    const o = st[0], w = DATA.weather, h = w?.hourly;
+    const age = Math.max(0, Math.round((Date.now() - Date.parse(o.t)) / 60e3));
+    const ago = age < 90 ? `${age} min ago` : `${Math.round(age / 60)} h ago`;
+    const dir = (b) => COMPASS[Math.round(b / 22.5) % 16];
+    const net = o.src === "MB" ? `Manitoba fire weather network${o.owner ? `, ${o.owner}` : ""}` : `ECCC${o.owner && o.owner !== "MSC" ? `, ${o.owner}` : ""}`;
+    let fc = "";
+    if (h) {
+      const i = h.time.findIndex((t) => t >= w.now);
+      if (i >= 0) fc = `Forecast for this hour: ${r0(h.temp[i])}° · RH ${r0(h.rh?.[i])}% · ${r0(h.ws[i])} km/h${h.gust?.[i] != null ? ` gusting ${r0(h.gust[i])}` : ""}`;
+    }
+    const more = st.slice(1).map((x) => `${esc(x.name)} ${r0(x.temp)}° ${r0(x.rh)}% ${x.ws != null ? `${r0(x.ws)} km/h` : ""}`).join(" · ");
+    return `<div class="obsnow" title="${esc(net)}"><b>Observed</b> at ${esc(o.name)} <span class="s">(${o.km} km ${dir(o.bearing)} · ${ago})</span>:
+      <b>${r0(o.temp)}°</b> · RH <b>${r0(o.rh)}%</b> · ${arrow(o.wd)} <b>${r0(o.ws)}</b>${o.gust != null ? ` gusting ${r0(o.gust)}` : ""} km/h
+      ${fc ? `<div class="s">${fc}</div>` : ""}${more ? `<div class="s">Nearby: ${more}</div>` : ""}</div>`;
+  }
+
   function forecastTab() {
     const w = DATA.weather;
     if (!w) return err("weather");

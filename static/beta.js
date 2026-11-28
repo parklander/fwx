@@ -59,6 +59,19 @@
         .map((a) => `<option value="${esc(a.id)}">${esc(a.name)}</option>`).join("")}</optgroup>`).join("");
     if (!areas.some((a) => a.id === areaId)) areaId = null;
     $("base").value = areaId || "";
+    $("locbase").onclick = () => {
+      if (!navigator.geolocation) return;
+      $("updated").textContent = "Finding your location…";
+      navigator.geolocation.getCurrentPosition((p) => {
+        const { latitude: lat, longitude: lon } = p.coords, r = Math.PI / 180;
+        const km = (a) => { const b = a.bbox, la = b ? Math.min(Math.max(lat, b[1]), b[3]) : a.lat, lo = b ? Math.min(Math.max(lon, b[0]), b[2]) : a.lon;
+          const h = Math.sin((la - lat) * r / 2) ** 2 + Math.cos(lat * r) * Math.cos(la * r) * Math.sin((lo - lon) * r / 2) ** 2; return 12742 * Math.asin(Math.sqrt(Math.min(1, h))); };
+        const [a, d] = areas.map((x) => [x, km(x)]).sort((x, y) => x[1] - y[1])[0];
+        $("updated").textContent = `${a.name}: ${d < 0.5 ? "you're inside its area" : `${Math.round(d)} km away`}`;
+        TRK.act("base_from_location");
+        $("base").value = a.id; $("base").onchange();
+      }, () => { $("updated").textContent = "Couldn't get your location"; }, { timeout: 10000, maximumAge: 10 * 60e3 });
+    };
     $("base").onchange = () => {
       areaId = $("base").value;
       try { localStorage.setItem("fwx-beta-base", areaId); } catch (_) {}

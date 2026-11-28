@@ -374,6 +374,58 @@
   };
   window.addEventListener("focus", () => { if ($("status").textContent.startsWith("Building")) status(""); });
 
+  // ---- nearest base from the browser's location (asked only on a tap; never sent to the server) ----------
+  const NEAR_KM = 150;
+  const kmTo = (a, lat, lon) => {
+    const b = a.bbox, cl = b ? [Math.min(Math.max(lat, b[1]), b[3]), Math.min(Math.max(lon, b[0]), b[2])] : [a.lat, a.lon];
+    const r = Math.PI / 180, dLat = (cl[0] - lat) * r, dLon = (cl[1] - lon) * r;
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat * r) * Math.cos(cl[0] * r) * Math.sin(dLon / 2) ** 2;
+    return 12742 * Math.asin(Math.sqrt(Math.min(1, h)));
+  };
+  function setBase(id) {
+    try { localStorage.setItem("fwx-base", id); localStorage.setItem("fwx-welcome-done", "1"); } catch (_) {}
+    $("mybase").value = id;
+    fillAreas();
+    $("aoi").value = id;
+    $("aoi").onchange();
+  }
+  function nearestBase(msgEl, done) {
+    if (!navigator.geolocation) { msgEl.textContent = "This browser can't share its location; pick your base from the list."; return; }
+    msgEl.textContent = "Finding your location…";
+    navigator.geolocation.getCurrentPosition((p) => {
+      const { latitude: lat, longitude: lon } = p.coords;
+      const best = areas.map((a) => [a, kmTo(a, lat, lon)]).sort((x, y) => x[1] - y[1])[0];
+      if (!best) return;
+      const [a, km] = best, where = km < 0.5 ? "you're inside its area" : `${Math.round(km)} km away`;
+      if (km <= NEAR_KM) {
+        TRK.act("base_from_location");
+        setBase(a.id);
+        msgEl.textContent = `${a.name}: ${where}. Set as your base.`;
+        done?.();
+      } else {
+        msgEl.innerHTML = `No base within ${NEAR_KM} km. The nearest is ${esc(a.name)}, ${Math.round(km)} km away. `
+          + `<button type="button" class="link" id="near-anyway">Use it anyway</button>`;
+        document.getElementById("near-anyway").onclick = () => { setBase(a.id); done?.(); };
+      }
+    }, (e) => {
+      msgEl.textContent = e.code === 1 ? "Location is blocked for this site; pick your base from the list." : "Couldn't get your location; pick your base from the list.";
+    }, { enableHighAccuracy: false, timeout: 10000, maximumAge: 10 * 60e3 });
+  }
+  $("locbase").onclick = () => nearestBase($("status"));
+
+  // first visit with no base: a small card asking which base, once
+  let welcomed = false;
+  try { welcomed = !!localStorage.getItem("fwx-welcome-done"); } catch (_) {}
+  if (!getBase() && !welcomed && !new URLSearchParams(location.search).get("aoi")) {
+    $("wl-pick").innerHTML = areaOptions("", "Choose from the list…");
+    $("wl-pick").value = "";
+    const closeWelcome = () => { $("welcome").hidden = true; try { localStorage.setItem("fwx-welcome-done", "1"); } catch (_) {} };
+    $("wl-loc").onclick = () => nearestBase($("wl-msg"), () => setTimeout(closeWelcome, 1800));
+    $("wl-pick").onchange = () => { TRK.act("base_from_welcome"); setBase($("wl-pick").value); closeWelcome(); };
+    $("wl-skip").onclick = () => { TRK.act("welcome_skipped"); closeWelcome(); };
+    $("welcome").hidden = false;
+  }
+
   // ---- ECCC alerts ----------------------------------------------------------------------------------
   const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
   const RANK = { warning: 3, watch: 2, statement: 1 };

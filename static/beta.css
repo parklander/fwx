@@ -82,3 +82,4 @@ main { max-width: 1400px; margin: 0 auto; padding: 16px 18px; }
 .st-season.s-grass .chip { background: #c76a00; } .st-season.s-growing .chip { background: #3c9a3f; }
 .st-season .sn { font-size: 12px; color: var(--muted); margin-top: 2px; }
 .st-season .pv { color: #b3261e; font-size: 12px; }
+.top .locb { background: none; border: 1px solid rgba(255,255,255,.35); color: #fff; border-radius: 6px; padding: 3px 7px; cursor: pointer; font-size: 15px; }

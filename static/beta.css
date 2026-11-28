@@ -1,3 +1,4 @@
+[hidden] { display: none !important; }  /* the hidden attribute always wins over a display rule */
 :root {
   --ink: #1d2329; --ink2: #3c444c; --muted: #6b7680; --line: #e3e6e9; --bg: #f4f6f8; --card: #fff;
   --l0: #2f7d32; --l0bg: #e8f3e8; --l1: #c76a00; --l1bg: #fff1df; --l2: #b3261e; --l2bg: #fde8e6;

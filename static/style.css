@@ -1,3 +1,4 @@
+[hidden] { display: none !important; }  /* the hidden attribute always wins over a display rule */
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; color: #1d2329; }
 body { display: flex; flex-direction: column; }
@@ -320,6 +321,7 @@ body.settings-open #controls { display: block; }
 #controls #basenote { margin-top: 4px; }
 .welcome { position: absolute; z-index: 800; left: 50%; top: 18%; transform: translateX(-50%); width: min(380px, 92vw);
   background: #fff; color: #1d2329; border-radius: 10px; box-shadow: 0 8px 30px rgba(0,0,0,.35); padding: 16px 18px; display: grid; gap: 8px; }
+.welcome[hidden] { display: none; }
 .welcome b { font-size: 17px; } .welcome p { margin: 0; font-size: 13px; color: #4a535b; }
 .welcome .btn { justify-self: start; } .welcome select { width: 100%; padding: 6px; }
 .welcome .link, .link { background: none; border: 0; padding: 0; color: #1f5fa8; text-decoration: underline; cursor: pointer; font: inherit; justify-self: start; }

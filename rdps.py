@@ -48,9 +48,10 @@ POLL_MIN = 10
 WORKERS = 4
 TOKENS = {"wspd": "WindSpeed_AGL-10m", "wdir": "WindDir_AGL-10m",          # -> frames as they are
           "accum": "Precip-Accum_Sfc", "ptype": "PrecipType-Instant_Sfc",  # -> the precip frame
-          "temp": "AirTemp_AGL-2m"}
+          "temp": "AirTemp_AGL-2m", "mslp": "Pressure_MSL"}
 FRAME_VARS = ("wspd", "wdir")
 RAW_VARS = ("accum", "ptype", "temp")     # kept as float arrays until the precip frame is derived
+OPTIONAL_VARS = ("mslp",)                 # nice to have: a run isn't held back or rejected for these
 PRATE_MIN = 0.05                          # mm/h: less than this in the hour counts as no precipitation
 PTYPE_NAMES = {1: "Rain", 2: "Rain/snow mix", 3: "Freezing rain", 4: "Ice pellets", 5: "Snow"}
 # precip byte: 0 no data, 1 dry, else 2 + (type - 1) * LEVELS + level, level on a log scale from PRATE_MIN to PRATE_TOP
@@ -165,6 +166,76 @@ def grib_to_raster(content):
     return np.where(idx >= 0, vals[np.maximum(idx, 0)], np.nan).astype(np.float32)
 
 
+# ---- sea-level pressure: isobars and H/L centres (the synoptic layer) --------------------------------------
+MSLP_STEP = 4          # hPa between isobars
+MSLP_COARSE = 4        # contour on every 4th display pixel (about 0.36°), after smoothing
+MSLP_HL_RADIUS = 9     # coarse cells (~3°): a centre is the highest/lowest point within this
+MSLP_HL_MIN = 2.0      # hPa: and is at least this much above (H) or below (L) the opposite extreme of that window
+
+
+def _box_blur(a, r):
+    """Mean over a (2r+1)² window, ignoring NaN (edges included)."""
+    v = np.where(np.isfinite(a), a, 0.0)
+    w = np.isfinite(a).astype(np.float64)
+    def acc(x):
+        c = np.cumsum(np.cumsum(np.pad(x, ((r + 1, r), (r + 1, r))), 0), 1)
+        return c[2 * r + 1:, 2 * r + 1:] - c[:-2 * r - 1, 2 * r + 1:] - c[2 * r + 1:, :-2 * r - 1] + c[:-2 * r - 1, :-2 * r - 1]
+    s, n = acc(v), acc(w)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        out = s / n
+    out[~np.isfinite(a)] = np.nan
+    return out
+
+
+def mslp_features(flat):
+    """Display-raster MSL pressure (Pa or hPa, flat) -> {"isobars": [{"p", "lines": [[[lon, lat], ...]]}],
+    "centres": [{"t": "H"|"L", "p", "lat", "lon"}]}."""
+    import contourpy
+    from numpy.lib.stride_tricks import sliding_window_view
+    h, w = raster_shape()
+    a = flat.reshape(h, w).astype(np.float64)
+    if np.nanmedian(a) > 5000:
+        a = a / 100.0  # Pa -> hPa
+    a = _box_blur(a, 3)
+    k = MSLP_COARSE
+    c = a[k // 2::k, k // 2::k]
+    rows = np.arange(k // 2, h, k)[: c.shape[0]]
+    cols = np.arange(k // 2, w, k)[: c.shape[1]]
+    b = BOUNDS
+    lons = b["west"] + (cols + 0.5) * (b["east"] - b["west"]) / w
+    ys = _merc_y(b["north"]) - (rows + 0.5) * (_merc_y(b["north"]) - _merc_y(b["south"])) / h
+    lats = np.degrees(2 * np.arctan(np.exp(ys)) - np.pi / 2)
+    cg = contourpy.contour_generator(lons, lats, np.ma.masked_invalid(c), name="serial", line_type="Separate")
+    lo, hi = np.nanmin(c), np.nanmax(c)
+    isobars = []
+    for p in range(int(np.ceil(lo / MSLP_STEP) * MSLP_STEP), int(hi) + 1, MSLP_STEP):
+        lines = []
+        for ln in cg.lines(p):
+            if len(ln) < 4:
+                continue
+            pts = ln[:: 2] if len(ln) > 40 else ln
+            lines.append(np.round(pts, 2).tolist())
+        if lines:
+            isobars.append({"p": p, "lines": lines})
+    # centres: the extreme within a window, standing out from the window mean, away from the edge
+    r = MSLP_HL_RADIUS
+    centres = []
+    if min(c.shape) > 2 * r + 1:
+        f = np.where(np.isfinite(c), c, np.nanmean(c))
+        win = sliding_window_view(np.pad(f, r, mode="edge"), (2 * r + 1, 2 * r + 1))
+        wmax, wmin = win.max(axis=(2, 3)), win.min(axis=(2, 3))
+        valid = np.isfinite(c)
+        valid[:r // 2, :] = valid[-(r // 2):, :] = valid[:, :r // 2] = valid[:, -(r // 2):] = False
+        for t, sel in (("H", (f == wmax) & (f - wmin >= MSLP_HL_MIN)), ("L", (f == wmin) & (wmax - f >= MSLP_HL_MIN))):
+            seen = []
+            for j, i in zip(*np.nonzero(sel & valid)):
+                if any(abs(j - a2) <= r and abs(i - b2) <= r for a2, b2 in seen):
+                    continue  # flat tops give several equal cells; keep one
+                seen.append((j, i))
+                centres.append({"t": t, "p": int(round(float(c[j, i]))), "lat": round(float(lats[j]), 2), "lon": round(float(lons[i]), 2)})
+    return {"isobars": isobars, "centres": centres, "step": MSLP_STEP}
+
+
 def precip_rate_type(acc1, acc0, raw, temp_k):
     """(rate mm/h, type 0-5) from accumulations at T and T-1 (kg/m² = mm), the type code at T and 2 m temperature."""
     rate = np.clip(acc1 - acc0, 0, None)  # accumulations never decrease; clip packing noise
@@ -254,13 +325,14 @@ class Rdps:
         shutil.rmtree(Path(data_dir) / "wind", ignore_errors=True)  # the wind-only layout before precip
         self._lock = threading.Lock()
         self.status = "starting"
-        self.run, self.hours, self.precip_hours = None, [], []
+        self.run, self.hours, self.precip_hours, self.mslp_hours = None, [], [], []
         for d in sorted(self.dir.iterdir(), reverse=True):  # newest complete run already on disk
             m = d / "manifest.json"
             if d.is_dir() and m.exists():
                 try:
                     doc = json.loads(m.read_text())
                     self.run, self.hours, self.precip_hours = doc["run"], doc["hours"], doc["precip_hours"]
+                    self.mslp_hours = doc.get("mslp_hours", [])
                     self.status = "ok"
                     break
                 except (ValueError, KeyError):
@@ -268,19 +340,22 @@ class Rdps:
         self._prune()
 
     def path(self, run, var, fh):
+        if var == "mslp":
+            return self.dir / run / "mslp" / f"{fh:03d}.json.gz"
         return self.dir / run / var / f"{fh:03d}.u8.gz"
 
     def meta(self):
         h, w = raster_shape()
         with self._lock:
             run, hours, phours, status = self.run, list(self.hours), set(self.precip_hours), self.status
+            mhours = set(self.mslp_hours)
         out = {"run": run, "status": status, "bounds": BOUNDS, "width": w, "height": h, "variables": VARIABLES,
                "precip": {"levels": LEVELS, "min": PRATE_MIN, "top": PRATE_TOP, "types": PTYPE_NAMES},
                "source": "ECCC RDPS 10 km", "hours": []}
         if run:
             t0 = run_time(run)
             out["hours"] = [{"fh": fh, "valid": (t0 + timedelta(hours=fh)).strftime("%Y-%m-%dT%H:%MZ"),
-                             "precip": fh in phours} for fh in hours]
+                             "precip": fh in phours, "mslp": fh in mhours} for fh in hours]
         return out
 
     def loop(self, stop):
@@ -300,7 +375,7 @@ class Rdps:
             if self.run and run <= self.run:
                 return  # nothing newer is complete yet
             hours = hours_for(run, now)
-            if all(_exists(url(run, v, hours[-1])) for v in TOKENS):
+            if all(_exists(url(run, v, hours[-1])) for v in TOKENS if v not in OPTIONAL_VARS):
                 break
         else:
             log.info("no recent RDPS run is complete on the Datamart yet")
@@ -308,7 +383,7 @@ class Rdps:
         log.info("downloading RDPS %sZ wind and precipitation, hours %d–%d", run, hours[0], hours[-1])
         part = self.dir / f"{run}.part"
         shutil.rmtree(part, ignore_errors=True)
-        for v in FRAME_VARS + ("precip", "_raw"):
+        for v in FRAME_VARS + ("precip", "_raw", "mslp"):
             (part / v).mkdir(parents=True)
 
         def one(job):
@@ -321,6 +396,14 @@ class Rdps:
                     r.raise_for_status()
                     if var in FRAME_VARS:
                         (part / var / f"{fh:03d}.u8.gz").write_bytes(grib_to_frame(r.content, var))
+                    elif var == "mslp":
+                        try:  # optional: a failure here mustn't sink the wind and precipitation
+                            doc = mslp_features(grib_to_raster(r.content))
+                        except Exception:
+                            log.exception("%s pressure %03d", run, fh)
+                            return False
+                        (part / "mslp" / f"{fh:03d}.json.gz").write_bytes(
+                            gzip.compress(json.dumps(doc, separators=(",", ":")).encode(), 6))
                     else:
                         np.save(part / "_raw" / f"{var}_{fh:03d}.npy", grib_to_raster(r.content))
                     return True
@@ -331,7 +414,7 @@ class Rdps:
 
         t = time.time()
         # the rate for hour T needs the accumulation at T-1 too (hour 0's accumulation is zero by definition)
-        jobs = ([(v, fh) for fh in hours for v in FRAME_VARS + RAW_VARS]
+        jobs = ([(v, fh) for fh in hours for v in FRAME_VARS + RAW_VARS + OPTIONAL_VARS]
                 + ([("accum", hours[0] - 1)] if hours[0] > 0 else []))
         with ThreadPoolExecutor(WORKERS, thread_name_prefix="rdps") as pool:
             ok = dict(zip(jobs, pool.map(one, jobs)))
@@ -350,12 +433,14 @@ class Rdps:
                         run, len(got), len(precip), len(hours))
             shutil.rmtree(part, ignore_errors=True)
             return
-        (part / "manifest.json").write_text(json.dumps({"run": run, "hours": got, "precip_hours": precip}))
+        mslp = [fh for fh in hours if ok.get(("mslp", fh))]
+        (part / "manifest.json").write_text(json.dumps({"run": run, "hours": got, "precip_hours": precip, "mslp_hours": mslp}))
         final = self.dir / run
         shutil.rmtree(final, ignore_errors=True)
         part.rename(final)
         with self._lock:
             self.run, self.hours, self.precip_hours, self.status = run, got, precip, "ok"
+            self.mslp_hours = mslp
         log.info("RDPS %sZ ready: %d wind and %d precipitation hours in %.0f s", run, len(got), len(precip), time.time() - t)
         self._prune()
 

@@ -323,6 +323,18 @@ def rdps_meta():
     return rdps_maps.meta()
 
 
+@app.get("/api/rdps/{run}/mslp/{fh}.json")
+def rdps_mslp(run: str, fh: int):
+    """Isobars and H/L centres for an RDPS hour (see rdps.mslp_features)."""
+    if not re.fullmatch(r"\d{10}", run):
+        raise HTTPException(404)
+    p = rdps_maps.path(run, "mslp", fh)
+    if not p.is_file():
+        raise HTTPException(404, "no pressure for this hour")
+    return FileResponse(p, media_type="application/json",
+                        headers={"Content-Encoding": "gzip", "Cache-Control": "public, max-age=31536000, immutable"})
+
+
 @app.get("/api/rdps/{run}/{var}/{fh}")
 def rdps_frame(run: str, var: str, fh: int):
     if not re.fullmatch(r"\d{10}", run) or var not in rdps.SERVED:

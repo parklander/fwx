@@ -10,3 +10,4 @@ pywebpush
 eccodes
 netCDF4
 pillow
+contourpy

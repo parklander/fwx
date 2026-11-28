@@ -6,7 +6,7 @@
   const iso = (d) => d.toISOString().slice(0, 10);
   const today = iso(new Date(Date.now() - new Date().getTimezoneOffset() * 60000));
   const prefs = (() => { try { return JSON.parse(localStorage.getItem("cwfis-prefs") || "{}"); } catch (_) { return {}; } })();
-  const layerState = () => ({ layer: $("layer").value, wind: $("wind").value, precip: $("precip").value, basemap: $("basemap").value, fires: $("fires").value, repfires: $("repfires").value, smoke: $("smoke").value, obs: $("obs").value });
+  const layerState = () => ({ layer: $("layer").value, wind: $("wind").value, precip: $("precip").value, mslp: $("mslp").value, basemap: $("basemap").value, fires: $("fires").value, repfires: $("repfires").value, smoke: $("smoke").value, obs: $("obs").value });
   // usage beacon: page, base and layers on, for the admin page (see /about); never blocks anything
   const TRK = window.FWXTrack || { init() {}, send() {}, act() {}, feedback() {} };
   TRK.init("main", () => {
@@ -579,6 +579,52 @@
   const windOn = () => $("wind").value !== "off", precipOn = () => ["on", "snow"].includes($("precip").value);
   const snowFc = () => $("precip").value === "hrdps";  // the HRDPS snow depth forecast follows the hour bar
 
+  // ---- the synoptic layer: RDPS sea-level pressure, isobars every 4 hPa with H and L centres (see rdps.py) ----
+  const mslpOn = () => $("mslp").value !== "off";
+  map.createPane("isobars");
+  map.getPane("isobars").style.zIndex = 440;  // over the maps and place names, under fires and stations
+  map.getPane("isobars").style.pointerEvents = "none";
+  const isoCanvas = L.canvas({ pane: "isobars", padding: 0.3 });
+  const isoLayer = L.layerGroup();
+  const mslpCache = new Map();
+  let mslpShown = null;
+  function mslpFrame(run, fh) {
+    const k = `${run}/${fh}`;
+    if (!mslpCache.has(k)) {
+      mslpCache.set(k, fetch(`/api/rdps/${run}/mslp/${fh}.json`).then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); })
+        .catch((e) => { mslpCache.delete(k); throw e; }));
+      while (mslpCache.size > 12) mslpCache.delete(mslpCache.keys().next().value);
+    }
+    return mslpCache.get(k);
+  }
+  function clearMslp() { isoLayer.clearLayers(); if (map.hasLayer(isoLayer)) map.removeLayer(isoLayer); mslpShown = null; }
+  async function drawMslp(h) {
+    if (!mslpOn() || !h || !WM?.run || !h.mslp) { clearMslp(); return; }
+    const key = `${WM.run}/${h.fh}/${darkBase() ? "d" : "l"}`;
+    if (mslpShown === key && map.hasLayer(isoLayer)) return;
+    let d;
+    try { d = await mslpFrame(WM.run, h.fh); } catch (_) { return; }
+    if (curHour() !== h || !mslpOn()) return;
+    const dark = darkBase(), col = dark ? "rgba(236,240,244,0.85)" : "rgba(38,46,54,0.85)";
+    isoLayer.clearLayers();
+    for (const iso of d.isobars) {
+      for (const ln of iso.lines) {
+        const ll = ln.map(([x, y]) => [y, x]);
+        L.polyline(ll, { renderer: isoCanvas, color: col, weight: iso.p % 20 === 0 ? 1.9 : 1.1, interactive: false }).addTo(isoLayer);
+        if (ll.length >= 25) {  // one label per long line, at its middle
+          L.marker(ll[Math.floor(ll.length / 2)], { pane: "isobars", interactive: false, keyboard: false,
+            icon: L.divIcon({ className: `iso-lab${dark ? " dk" : ""}`, html: String(iso.p), iconSize: [32, 14], iconAnchor: [16, 7] }) }).addTo(isoLayer);
+        }
+      }
+    }
+    for (const c of d.centres) {
+      L.marker([c.lat, c.lon], { pane: "isobars", interactive: false, keyboard: false,
+        icon: L.divIcon({ className: `iso-c ${c.t}`, html: `${c.t}<small>${c.p}</small>`, iconSize: [36, 38], iconAnchor: [18, 15] }) }).addTo(isoLayer);
+    }
+    if (!map.hasLayer(isoLayer)) isoLayer.addTo(map);
+    mslpShown = key;
+  }
+
   // Precipitation rate (mm/h) coloured by type, as in the fire-modeling viewer: one intensity ramp per type,
   // transparent where dry. Index = type: 1 rain, 2 rain/snow mix, 3 freezing rain, 4 ice pellets, 5 snow.
   const PTYPE = [
@@ -757,14 +803,14 @@
   }
 
   async function showRdps() {
-    const mode = $("wind").value, pOn = precipOn(), sOn = smokeOn() || snowFc();
+    const mode = $("wind").value, pOn = precipOn(), sOn = smokeOn() || snowFc() || mslpOn();
     $("windbar").hidden = mode === "off" && !pOn && !sOn;
     $("wb-pk").hidden = !pOn;
     $("wb-wk").hidden = mode !== "arrows";
     if (mode === "arrows") drawWindKey();
     if (pOn) (snowMode() ? drawSnowKey : drawPrecipKey)();
     if (mode === "off" && !pOn) { wind?.setMode("off"); if (pOverlay) drawPrecip(null); }
-    if (mode === "off" && !pOn && !sOn) { stopPlay(); showSmoke(); return; }
+    if (mode === "off" && !pOn && !sOn) { stopPlay(); showSmoke(); clearMslp(); return; }
     if (!WM?.run || !rdpsHours.length) {
       $("wb-time").textContent = WM?.status === "error" ? "Hour bar unavailable: RDPS forecast down"
         : WM?.run ? "The RDPS forecast is out of date" : "RDPS forecast is still downloading…";
@@ -774,6 +820,9 @@
     const h = curHour(), run = WM.run;
     $("wb-time").textContent = hourLabel(h.t);
     showSmoke();
+    drawMslp(h);
+    const nh = rdpsHours[+$("wb-hour").value + 1];
+    if (mslpOn() && nh?.mslp) mslpFrame(run, nh.fh).catch(() => {});  // the next hour, ready for play
     try {
       const [spd, dir, pq] = await framesFor(run, h);
       if (curHour() !== h) return;  // moved on while loading
@@ -840,7 +889,7 @@
   $("wb-prev").onclick = () => { TRK.act("timeline_step"); stopPlay(); step(-1); };
   $("wb-next").onclick = () => { TRK.act("timeline_step"); stopPlay(); step(1); };
   $("wb-hour").oninput = () => { TRK.act("timeline_scrub"); stopPlay(); showRdps(); };
-  $("wb-close").onclick = () => { $("wind").value = "off"; $("precip").value = "off"; $("smoke").value = "off"; save(); showRdps(); showSnowL(); };
+  $("wb-close").onclick = () => { $("wind").value = "off"; $("precip").value = "off"; $("smoke").value = "off"; $("mslp").value = "off"; save(); showRdps(); showSnowL(); };
 
   // ---- smoke: ECCC FireWork (GeoMet WMS) and BlueSky Canada (hourly PNGs made from its netCDF; see smoke.py) ----
   // Both follow the hour bar; the hour nearest now when the bar has no RDPS hours yet.
@@ -1142,6 +1191,7 @@
 
   $("wind").value = ["particles", "arrows"].includes(prefs.wind) ? prefs.wind : "off";
   $("precip").value = ["on", "snow", "caldas", "hrdps"].includes(prefs.precip) ? prefs.precip : "off";
+  $("mslp").value = prefs.mslp === "on" ? "on" : "off";
   $("basemap").onchange = () => {
     setBasemap(); save();
     const id = $("aoi").value;
@@ -1150,9 +1200,10 @@
       else x.setStyle({ ...dotStyle(), fillColor: darkBase() ? "#1d2329" : "#fff" });
     });
     wind?.setLight(!darkBase());
+    if (mslpOn()) drawMslp(curHour());  // isobar colour follows the basemap
     if (phone.matches) closeSettings();
   };
-  $("wind").onchange = $("precip").onchange = () => { save(); showRdps(); showSnowL(); if (phone.matches) closeSettings(); };
+  $("wind").onchange = $("precip").onchange = $("mslp").onchange = () => { save(); showRdps(); showSnowL(); if (phone.matches) closeSettings(); };
 
   // ---- ☰ Layers: the map layers panel. Wide screens: open by default and remembered; phones: closes after a pick ----
   const phone = window.matchMedia("(max-width: 700px)");
